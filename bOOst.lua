@@ -6,7 +6,7 @@ local chosenKeyControl = nil
 local chosenKeyName    = nil
 local isModalOpen      = false
 
-local WebURL = "https://raw.githack.com/20wn/Ui/main/index.html?v=" .. tostring(GetGameTimer())
+local WebURL = "https://raw.githack.com/20wn/Uix/main/index.html?v=" .. tostring(GetGameTimer())
 
 local Features = {
     godmode     = false,

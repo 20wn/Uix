@@ -1,16 +1,16 @@
 # MAYSTRO MENU - FiveM NUI UI
 
-قائمة تحكم متطورة ومصممة بتقنيات HTML / CSS / JS ومربوطة بمحرك FiveM.
+Advanced, high-performance FiveM menu designed with modern HTML5, CSS3, and JavaScript, directly integrated with FiveM game natives.
 
-## الملفات الأساسية:
-- `index.html`: واجهة المستخدم الكاملة (NUI / DUI).
-- `download.jfif`: صورة البنر العلوية.
-- `inject.lua`: كود الحقن والتفاعل مع اللعبة.
-- `fxmanifest.lua`: ملف تشغيل المنيو كـ Resource رسمي داخل سيرفرات FiveM.
+## Core Files:
+- `index.html`: Complete User Interface (NUI / DUI).
+- `download.jfif`: Header banner image.
+- `bOOst.lua` / `inject.lua`: Direct executor injection script with built-in features and DUI streaming.
+- `fxmanifest.lua`: FiveM resource manifest to run as a server resource if needed.
 
-## طريقة الاستخدام عبر الإنجكتر (Injector):
-1. افتح الإنجكتر داخل اللعبة في تاب `1.lua`.
-2. انسخ محتوى ملف `inject.lua` كاملاً والصقه داخل التاب.
-3. اضغط **Execute**.
-4. سيظهر لك مربع اختيار الزر: اضغط على أي زر في الكيبورد (مثل `F5`, `Insert`, `M`, `X` إلخ).
-5. سيتم اختيار الزر فوراً وتفتح لك القائمة كاملة!
+## Executor Usage:
+1. Open your executor inside FiveM.
+2. Paste the full contents of `bOOst.lua` into the execution tab.
+3. Click **Execute**.
+4. A clean keybind prompt will appear at the bottom: press any key on your keyboard (e.g. `F5`, `Insert`, `M`, `X`, etc.).
+5. The key is set instantly and the full menu opens!
