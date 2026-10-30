@@ -1326,7 +1326,7 @@
                 urlModal.classList.add('active');
                 bannerUrlInput.focus();
                 bannerUrlInput.value = '';
-                try { fetch('https://' + GetParentResourceName() + '/setModalFocus', { method: 'POST', body: JSON.stringify({ focus: true }) }); } catch(e){}
+                
             } else if (action === 'delete-image') {
                 bannerImg.src = '';
                 bannerImg.style.display = 'none';
@@ -1412,7 +1412,7 @@
         urlModal.addEventListener('click', (e) => {
             if (e.target === urlModal) {
                 urlModal.classList.remove('active');
-                try { fetch('https://' + GetParentResourceName() + '/setModalFocus', { method: 'POST', body: JSON.stringify({ focus: false }) }); } catch(e){}
+                
             }
         });
 
@@ -1423,11 +1423,11 @@
                 urlModal.classList.remove('active');
                 bannerUrlInput.value = '';
                 if (url) updateBanner(url);
-                try { fetch('https://' + GetParentResourceName() + '/setModalFocus', { method: 'POST', body: JSON.stringify({ focus: false }) }); } catch(e){}
+                
             } else if (e.key === 'Escape') {
                 urlModal.classList.remove('active');
                 bannerUrlInput.value = '';
-                try { fetch('https://' + GetParentResourceName() + '/setModalFocus', { method: 'POST', body: JSON.stringify({ focus: false }) }); } catch(e){}
+                
             }
         });
 
@@ -1447,8 +1447,9 @@
             } else if (data.action === 'setKeybind') {
                 setMenuKeybind(data.key || 'f5');
             } else if (data.action === 'keydown') {
-                // simulate keyboard nav sent from Lua
-                window.dispatchEvent(new KeyboardEvent('keydown', { key: data.key, bubbles: true }));
+                // dispatch to active element first (e.g. banner input), then window
+                const _target = (document.activeElement && document.activeElement !== document.body) ? document.activeElement : window;
+                _target.dispatchEvent(new KeyboardEvent('keydown', { key: data.key, bubbles: true, cancelable: true }));
             } else if (data.action === 'showKeybind') {
                 showKeybindPrompt();
             }

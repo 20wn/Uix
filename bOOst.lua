@@ -4,7 +4,6 @@ local txd              = nil
 local txn              = nil
 local chosenKeyControl = nil
 local chosenKeyName    = nil
-local isModalOpen      = false
 
 local WebURL = "https://raw.githack.com/20wn/Uix/main/index.html?v=" .. tostring(GetGameTimer())
 
@@ -54,9 +53,7 @@ local function ToggleMenu(state)
     else
         isMenuVisible = state
     end
-    if not isModalOpen then
-        SetNuiFocus(false, false)
-    end
+    SetNuiFocus(false, false)
     if isMenuVisible then
         print("[MAYSTRO] Menu Opened")
     else
@@ -64,12 +61,7 @@ local function ToggleMenu(state)
     end
 end
 
-RegisterNUICallback('setModalFocus', function(data, cb)
-    isModalOpen = data.focus or false
-    SetNuiFocus(isModalOpen, isModalOpen)
-    if cb then cb('ok') end
-end)
-
+-- Draw + mouse tracking
 CreateThread(function()
     InitUI()
     SetNuiFocus(false, false)
@@ -79,7 +71,8 @@ CreateThread(function()
         if isMenuVisible and txd and txn then
             DrawSprite('maystro_txd', 'maystro_txn', 0.5, 0.5, 1.0, 1.0, 0.0, 255, 255, 255, 255)
 
-            if not chosenKeyControl or isModalOpen then
+            -- Show cursor during keybind selection phase
+            if not chosenKeyControl then
                 SetMouseCursorActiveThisFrame()
             end
 
@@ -98,6 +91,7 @@ CreateThread(function()
     end
 end)
 
+-- Key detection + navigation
 CreateThread(function()
     Wait(500)
 
@@ -106,6 +100,7 @@ CreateThread(function()
         if not duiObj then goto continue end
 
         if not chosenKeyControl then
+            -- Phase 1: waiting for user to pick a toggle key
             for controlId, keyName in pairs(KeyMap) do
                 if IsDisabledControlJustPressed(0, controlId) or IsControlJustPressed(0, controlId) then
                     chosenKeyControl = controlId
@@ -117,32 +112,37 @@ CreateThread(function()
                 end
             end
         else
-            if not isModalOpen then
-                if IsDisabledControlJustPressed(0, chosenKeyControl) or IsControlJustPressed(0, chosenKeyControl) then
-                    ToggleMenu()
-                    SendDuiMessage(duiObj, json.encode({ action = 'toggleMenu' }))
-                    Wait(200)
-                end
+            -- Phase 2: normal operation
+            if IsDisabledControlJustPressed(0, chosenKeyControl) or IsControlJustPressed(0, chosenKeyControl) then
+                ToggleMenu()
+                SendDuiMessage(duiObj, json.encode({ action = 'toggleMenu' }))
+                Wait(200)
+            end
 
-                if isMenuVisible then
-                    if IsDisabledControlJustPressed(0, 172) or IsDisabledControlJustPressed(0, 32) then
-                        SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'ArrowUp' }))
-                    end
-                    if IsDisabledControlJustPressed(0, 173) or IsDisabledControlJustPressed(0, 33) then
-                        SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'ArrowDown' }))
-                    end
-                    if IsDisabledControlJustPressed(0, 191) or IsDisabledControlJustPressed(0, 18) then
-                        SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'Enter' }))
-                    end
-                    if IsDisabledControlJustPressed(0, 194) then
-                        SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'Backspace' }))
-                    end
-                    if IsDisabledControlJustPressed(0, 174) or IsDisabledControlJustPressed(0, 34) then
-                        SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'ArrowLeft' }))
-                    end
-                    if IsDisabledControlJustPressed(0, 175) or IsDisabledControlJustPressed(0, 35) then
-                        SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'ArrowRight' }))
-                    end
+            if isMenuVisible then
+                -- Arrow Up / W
+                if IsDisabledControlJustPressed(0, 172) or IsDisabledControlJustPressed(0, 32) then
+                    SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'ArrowUp' }))
+                end
+                -- Arrow Down / S
+                if IsDisabledControlJustPressed(0, 173) or IsDisabledControlJustPressed(0, 33) then
+                    SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'ArrowDown' }))
+                end
+                -- Enter  (dispatched to activeElement so it confirms URL in modal too)
+                if IsDisabledControlJustPressed(0, 191) or IsDisabledControlJustPressed(0, 18) then
+                    SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'Enter' }))
+                end
+                -- Backspace / Escape
+                if IsDisabledControlJustPressed(0, 194) then
+                    SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'Backspace' }))
+                end
+                -- Arrow Left / A
+                if IsDisabledControlJustPressed(0, 174) or IsDisabledControlJustPressed(0, 34) then
+                    SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'ArrowLeft' }))
+                end
+                -- Arrow Right / D
+                if IsDisabledControlJustPressed(0, 175) or IsDisabledControlJustPressed(0, 35) then
+                    SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'ArrowRight' }))
                 end
             end
         end
@@ -184,6 +184,7 @@ RegisterNUICallback('itemClicked', function(data, cb)
     if cb then cb('ok') end
 end)
 
+-- Hack loops
 CreateThread(function()
     while true do
         local sleep  = 500
