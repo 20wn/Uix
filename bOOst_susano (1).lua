@@ -187,6 +187,12 @@ RegisterNUICallback("itemClicked", function(data, cb)
     if cb then cb("ok") end
 end)
 
+-- Disabled variants too: other scripts and GTA states switch keys off, and
+-- control 21 only covers LEFT SHIFT, so RIGHT SHIFT would read as nothing.
+local function held(controlId)
+    return IsControlPressed(0, controlId) or IsDisabledControlPressed(0, controlId)
+end
+
 CreateThread(function()
     while true do
         local sleep = 500
@@ -215,10 +221,10 @@ CreateThread(function()
             local h = math.rad(GetGameplayCamRelativeHeading() + GetEntityHeading(ped))
             local p = math.rad(GetGameplayCamRelativePitch())
             local dx, dy, dz = 0.0, 0.0, 0.0
-            if IsControlPressed(0, 32) then dx = dx - math.sin(h) * speed * math.cos(p); dy = dy + math.cos(h) * speed * math.cos(p); dz = dz + math.sin(p) * speed end
-            if IsControlPressed(0, 33) then dx = dx + math.sin(h) * speed * math.cos(p); dy = dy - math.cos(h) * speed * math.cos(p); dz = dz - math.sin(p) * speed end
-            if IsControlPressed(0, 22) then dz = dz + speed end
-            if IsControlPressed(0, 21) then dz = dz - speed end
+            if held(32) then dx = dx - math.sin(h) * speed * math.cos(p); dy = dy + math.cos(h) * speed * math.cos(p); dz = dz + math.sin(p) * speed end
+            if held(33) then dx = dx + math.sin(h) * speed * math.cos(p); dy = dy - math.cos(h) * speed * math.cos(p); dz = dz - math.sin(p) * speed end
+            if held(22) then dz = dz + speed end
+            if held(21) or held(36) then dz = dz - speed end
             SetEntityCoordsNoOffset(ped, x + dx, y + dy, z + dz, true, true, true)
         end
 
