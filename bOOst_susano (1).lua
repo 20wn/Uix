@@ -21,6 +21,8 @@ local Features = {
     ragdoll     = false
 }
 
+-- SPACE is deliberately absent: it is the noclip ascend key, so binding the menu
+-- to it would close the menu every time he flies up.
 local KeyMap = {
     [166] = "F5",  [167] = "F6",  [168] = "F7",  [169] = "F8",
     [56]  = "F9",  [57]  = "F10", [344] = "F11",
@@ -30,7 +32,6 @@ local KeyMap = {
     [244] = "M",  [73]  = "X",  [74]  = "H",  [38]  = "E",
     [44]  = "Q",  [45]  = "R",  [47]  = "G",  [23]  = "F",
     [249] = "N",  [246] = "Y",  [245] = "T",
-    [22]  = "SPACE",
     [157] = "1",  [158] = "2",  [159] = "3",  [160] = "4",
     [164] = "5",  [165] = "6",  [161] = "7",  [162] = "8",
     [163] = "9",  [156] = "0",  [243] = "~"
@@ -187,6 +188,15 @@ RegisterNUICallback("itemClicked", function(data, cb)
     if cb then cb("ok") end
 end)
 
+-- Picking a new key in the UI has to clear the bound key here too, otherwise the
+-- old key keeps toggling the menu and the new key never takes over.
+RegisterNUICallback("resetKeybind", function(_, cb)
+    chosenKeyControl = nil
+    chosenKeyName = nil
+    print("[MAYSTRO] Keybind reset - waiting for a new key")
+    if cb then cb("ok") end
+end)
+
 -- Disabled variants too: other scripts and GTA states switch keys off, and
 -- control 21 only covers LEFT SHIFT, so RIGHT SHIFT would read as nothing.
 local function held(controlId)
@@ -219,12 +229,15 @@ CreateThread(function()
             local x, y, z = table.unpack(GetEntityCoords(ped, true))
             local speed = (Features.noclipSpeed or 2) * 0.4
             local h = math.rad(GetGameplayCamRelativeHeading() + GetEntityHeading(ped))
-            local p = math.rad(GetGameplayCamRelativePitch())
             local dx, dy, dz = 0.0, 0.0, 0.0
-            if held(32) then dx = dx - math.sin(h) * speed * math.cos(p); dy = dy + math.cos(h) * speed * math.cos(p); dz = dz + math.sin(p) * speed end
-            if held(33) then dx = dx + math.sin(h) * speed * math.cos(p); dy = dy - math.cos(h) * speed * math.cos(p); dz = dz - math.sin(p) * speed end
-            if held(22) then dz = dz + speed end
-            if held(21) or held(36) then dz = dz - speed end
+            -- W/S/A/D stay flat on purpose: pitch is left out so walking never climbs
+            -- or dives with the camera. Vertical belongs to the arrows only.
+            if held(32) then dx = dx - math.sin(h) * speed; dy = dy + math.cos(h) * speed end
+            if held(33) then dx = dx + math.sin(h) * speed; dy = dy - math.cos(h) * speed end
+            if held(34) then dx = dx - math.cos(h) * speed; dy = dy - math.sin(h) * speed end
+            if held(35) then dx = dx + math.cos(h) * speed; dy = dy + math.sin(h) * speed end
+            if held(172) or held(22) then dz = dz + speed end
+            if held(173) or held(21) or held(36) then dz = dz - speed end
             SetEntityCoordsNoOffset(ped, x + dx, y + dy, z + dz, true, true, true)
         end
 
