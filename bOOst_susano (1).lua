@@ -228,16 +228,19 @@ CreateThread(function()
             sleep = 0
             local x, y, z = table.unpack(GetEntityCoords(ped, true))
             local speed = (Features.noclipSpeed or 2) * 0.4
+            -- SHIFT boosts and CTRL slows; neither touches altitude.
+            if held(21) then speed = speed * 2.5 end
+            if held(36) then speed = speed * 0.35 end
             local h = math.rad(GetGameplayCamRelativeHeading() + GetEntityHeading(ped))
+            local p = math.rad(GetGameplayCamRelativePitch())
             local dx, dy, dz = 0.0, 0.0, 0.0
-            -- W/S/A/D stay flat on purpose: pitch is left out so walking never climbs
-            -- or dives with the camera. Vertical belongs to the arrows only.
-            if held(32) then dx = dx - math.sin(h) * speed; dy = dy + math.cos(h) * speed end
-            if held(33) then dx = dx + math.sin(h) * speed; dy = dy - math.cos(h) * speed end
+            -- W/S fly toward the camera, pitch included, so the view steers the flight.
+            if held(32) then dx = dx - math.sin(h) * speed * math.cos(p); dy = dy + math.cos(h) * speed * math.cos(p); dz = dz + math.sin(p) * speed end
+            if held(33) then dx = dx + math.sin(h) * speed * math.cos(p); dy = dy - math.cos(h) * speed * math.cos(p); dz = dz - math.sin(p) * speed end
             if held(34) then dx = dx - math.cos(h) * speed; dy = dy - math.sin(h) * speed end
             if held(35) then dx = dx + math.cos(h) * speed; dy = dy + math.sin(h) * speed end
             if held(172) or held(22) then dz = dz + speed end
-            if held(173) or held(21) or held(36) then dz = dz - speed end
+            if held(173) then dz = dz - speed end
             SetEntityCoordsNoOffset(ped, x + dx, y + dy, z + dz, true, true, true)
         end
 
