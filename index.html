@@ -859,7 +859,8 @@
                 you: 'you',
                 spectate: 'Spectate',
                 spectating: 'Spectating',
-                copyOutfit: 'Copy Outfit'
+                copyOutfit: 'Copy Outfit',
+                teleport: 'Teleport'
             },
             ar: {
                 tabList: 'القائمة',
@@ -902,7 +903,8 @@
                 you: 'أنت',
                 spectate: 'مراقبة',
                 spectating: 'قيد المراقبة',
-                copyOutfit: 'نسخ الملابس'
+                copyOutfit: 'نسخ الملابس',
+                teleport: 'انتقال'
             }
         };
 
@@ -921,6 +923,12 @@
             if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             if (audioCtx.state === 'suspended') audioCtx.resume();
             return audioCtx;
+        }
+
+        // The DUI stays live while the panel is hidden (keybind prompt, closed menu), so the
+        // mouse must not select or click rows that are not on screen.
+        function menuShown() {
+            return !menuWrapper.classList.contains('hidden');
         }
 
         function playSound(frequency = 760, duration = 0.035) {
@@ -1035,7 +1043,8 @@
             const watched = spectateId === id;
             return [
                 { key: 'spectate', label: watched ? t.spectating : t.spectate, on: watched },
-                { key: 'copyOutfit', label: t.copyOutfit, on: false }
+                { key: 'copyOutfit', label: t.copyOutfit, on: false },
+                { key: 'teleport', label: t.teleport, on: false }
             ];
         }
 
@@ -1106,18 +1115,25 @@
         }
 
         // The panel has one fixed height, so a list taller than it scrolls inside instead of
-        // stretching the menu down the screen.
+        // stretching the menu down the screen. The view's own padding (4 top + 8 bottom) is not
+        // part of the scroll window, so the last row stops above the corner instead of on it.
+        const VIEW_PAD = 12;
+
+        function listViewHeight() {
+            return Math.max(1, menuItemsView.clientHeight - VIEW_PAD);
+        }
+
         function scrollListTo(index, immediate) {
             const el = getItems()[index];
             if (!el) return;
-            const viewH = menuItemsView.clientHeight;
+            const viewH = listViewHeight();
             const listH = itemsContainer.scrollHeight;
             const top = el.offsetTop - itemsContainer.offsetTop;
             const bottom = top + el.offsetHeight;
 
             let off = listOffset;
-            if (bottom - off > viewH - 8) off = bottom - viewH + 8;
-            if (top - off < 4) off = top - 4;
+            if (bottom - off > viewH - 4) off = bottom - viewH + 4;
+            if (top - off < 0) off = top;
             listOffset = Math.max(0, Math.min(off, Math.max(0, listH - viewH)));
 
             if (immediate) {
@@ -1153,19 +1169,19 @@
                 const topOffset = activeItem.getBoundingClientRect().top - menuItemsView.getBoundingClientRect().top;
                 setMarker(selectionPill, topOffset, activeItem.offsetHeight, immediate);
 
-                const viewH = menuItemsView.clientHeight;
+                const viewH = listViewHeight();
                 const listH = itemsContainer.scrollHeight;
                 if (listH > viewH + 4) {
                     // A scrolling list uses the rail as a thumb, not as a row marker.
                     const thumb = Math.max(24, viewH * viewH / listH);
                     const travel = Math.max(1, listH - viewH);
-                    setMarker(sideScrollIndicator, 4 + (listOffset / travel) * (viewH - thumb - 12), thumb, immediate);
+                    setMarker(sideScrollIndicator, 4 + (listOffset / travel) * (viewH - thumb), thumb, immediate);
                 } else {
                     setMarker(sideScrollIndicator, topOffset, activeItem.offsetHeight, immediate);
                 }
             }
 
-            if (!suppressSelectionSound) playSound(760, 0.03);
+            if (menuShown() && !suppressSelectionSound) playSound(760, 0.03);
         }
 
         function renderCurrentView(targetIndex = 0) {
@@ -1291,6 +1307,7 @@
                 if (stepperEl) {
                     stepperEl.addEventListener('click', (e) => {
                         e.stopPropagation();
+                        if (!menuShown()) return;
                         const all = Array.from(getItems());
                         const idx = all.indexOf(itemEl);
                         if (idx !== -1) {
@@ -1301,12 +1318,14 @@
                 }
 
                 itemEl.addEventListener('mouseenter', () => {
+                    if (!menuShown()) return;
                     const all = Array.from(getItems());
                     const idx = all.indexOf(itemEl);
                     if (idx !== -1) updateSelection(idx);
                 });
 
                 itemEl.addEventListener('click', () => {
+                    if (!menuShown()) return;
                     executeAction(itemEl);
                 });
 

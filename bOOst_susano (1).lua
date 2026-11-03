@@ -142,11 +142,13 @@ CreateThread(function()
                 Wait(200)
             end
 
+            -- Arrows only: W/S/A/D belong to walking and noclip, so the menu must not
+            -- answer to them.
             if isMenuVisible then
-                if IsDisabledControlJustPressed(0, 172) or IsDisabledControlJustPressed(0, 32) then
+                if IsDisabledControlJustPressed(0, 172) then
                     SendDuiMessage(duiObj, json.encode({ action = "keydown", key = "ArrowUp" }))
                 end
-                if IsDisabledControlJustPressed(0, 173) or IsDisabledControlJustPressed(0, 33) then
+                if IsDisabledControlJustPressed(0, 173) then
                     SendDuiMessage(duiObj, json.encode({ action = "keydown", key = "ArrowDown" }))
                 end
                 if IsDisabledControlJustPressed(0, 191) or IsDisabledControlJustPressed(0, 18) then
@@ -155,10 +157,10 @@ CreateThread(function()
                 if IsDisabledControlJustPressed(0, 194) then
                     SendDuiMessage(duiObj, json.encode({ action = "keydown", key = "Backspace" }))
                 end
-                if IsDisabledControlJustPressed(0, 174) or IsDisabledControlJustPressed(0, 34) then
+                if IsDisabledControlJustPressed(0, 174) then
                     SendDuiMessage(duiObj, json.encode({ action = "keydown", key = "ArrowLeft" }))
                 end
-                if IsDisabledControlJustPressed(0, 175) or IsDisabledControlJustPressed(0, 35) then
+                if IsDisabledControlJustPressed(0, 175) then
                     SendDuiMessage(duiObj, json.encode({ action = "keydown", key = "ArrowRight" }))
                 end
             end
@@ -431,9 +433,20 @@ RegisterNUICallback("serverAction", function(data, cb)
                 SetSpectate(target)
             end
         elseif data.action == "copyOutfit" then
-            if tped and tped ~= 0 then
+            if pedExists(tped) then
                 local ok, err = pcall(CopyOutfit, tped, PlayerPedId())
                 if not ok then print("[MAYSTRO] copy outfit failed: " .. tostring(err)) end
+            end
+        elseif data.action == "teleport" then
+            local tx, ty, tz
+            if pedExists(tped) then tx, ty, tz = coordsOf(tped) end
+            if tx then
+                -- Driving means the car travels with him, so the vehicle is the entity to move.
+                local mine = PlayerPedId()
+                local veh = try(GetVehiclePedIsIn, 0, mine, false)
+                local ent = (veh and veh > 0) and veh or mine
+                local ok, err = pcall(SetEntityCoords, ent, tx, ty, tz, false, false, false, true)
+                if not ok then print("[MAYSTRO] teleport failed: " .. tostring(err)) end
             end
         end
 
