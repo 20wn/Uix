@@ -1536,6 +1536,14 @@
         // Initial setup
         renderCurrentView(0);
         showKeybindPrompt();
+        // updateBanner() only sees user-applied links, so the default src needs its own pass
+        function applyBannerTheme() {
+            if (!bannerImg.naturalWidth) return;
+            const colors = extractDominantColor(bannerImg);
+            if (colors) applyThemeColor(colors.hex, colors.bright);
+        }
+        if (bannerImg.complete) applyBannerTheme();
+        else bannerImg.addEventListener('load', applyBannerTheme, { once: true });
         if (keybindBox) {
             keybindBox.style.cursor = 'pointer';
             keybindBox.addEventListener('click', () => {
