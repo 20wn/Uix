@@ -1,3 +1,6 @@
+-- MAYSTRO client loader (resource version, loaded by fxmanifest client_scripts).
+-- Same Lua as the Susano payload so both entry points behave identically.
+
 local isMenuVisible    = true
 local duiObj           = nil
 local txd              = nil
@@ -17,6 +20,8 @@ local Features = {
     ragdoll     = false
 }
 
+-- SPACE is deliberately absent: it is the noclip ascend key, so binding the menu
+-- to it would close the menu every time he flies up.
 local KeyMap = {
     [166] = "F5",  [167] = "F6",  [168] = "F7",  [169] = "F8",
     [56]  = "F9",  [57]  = "F10", [344] = "F11",
@@ -26,25 +31,38 @@ local KeyMap = {
     [244] = "M",  [73]  = "X",  [74]  = "H",  [38]  = "E",
     [44]  = "Q",  [45]  = "R",  [47]  = "G",  [23]  = "F",
     [249] = "N",  [246] = "Y",  [245] = "T",
-    [22]  = "SPACE",
     [157] = "1",  [158] = "2",  [159] = "3",  [160] = "4",
     [164] = "5",  [165] = "6",  [161] = "7",  [162] = "8",
     [163] = "9",  [156] = "0",  [243] = "~"
 }
 
 local function InitUI()
+    if duiObj then return end
+
+    duiObj = CreateDui(WebURL, 1920, 1080)
     if not duiObj then
-        duiObj = CreateDui(WebURL, 1920, 1080)
-        while not IsDuiAvailable(duiObj) do
-            Wait(100)
-        end
-        local duiHandle = GetDuiHandle(duiObj)
-        txd = CreateRuntimeTxd('maystro_txd')
-        txn = CreateRuntimeTextureFromDuiHandle(txd, 'maystro_txn', duiHandle)
-        Wait(600)
-        SendDuiMessage(duiObj, json.encode({ action = 'showKeybind' }))
-        print("[MAYSTRO] UI Loaded!")
+        print("[MAYSTRO] CreateDui failed")
+        return
     end
+
+    local timeout = GetGameTimer() + 15000
+    while not IsDuiAvailable(duiObj) do
+        if GetGameTimer() > timeout then
+            print("[MAYSTRO] DUI load timeout")
+            DestroyDui(duiObj)
+            duiObj = nil
+            return
+        end
+        Wait(100)
+    end
+
+    local duiHandle = GetDuiHandle(duiObj)
+    txd = CreateRuntimeTxd("maystro_txd")
+    txn = CreateRuntimeTextureFromDuiHandle(txd, "maystro_txn", duiHandle)
+    Wait(600)
+    SendDuiMessage(duiObj, json.encode({ action = "setResource", name = GetCurrentResourceName() }))
+    SendDuiMessage(duiObj, json.encode({ action = "showKeybind" }))
+    print("[MAYSTRO] UI Loaded!")
 end
 
 local function ToggleMenu(state)
@@ -54,14 +72,9 @@ local function ToggleMenu(state)
         isMenuVisible = state
     end
     SetNuiFocus(false, false)
-    if isMenuVisible then
-        print("[MAYSTRO] Menu Opened")
-    else
-        print("[MAYSTRO] Menu Closed")
-    end
+    print(isMenuVisible and "[MAYSTRO] Menu Opened" or "[MAYSTRO] Menu Closed")
 end
 
--- Draw + mouse tracking
 CreateThread(function()
     InitUI()
     SetNuiFocus(false, false)
@@ -69,9 +82,13 @@ CreateThread(function()
     while true do
         Wait(0)
         if isMenuVisible and txd and txn then
-            DrawSprite('maystro_txd', 'maystro_txn', 0.5, 0.5, 1.0, 1.0, 0.0, 255, 255, 255, 255)
+            -- 2D draws stack in call order and FiveM has no layer/order native, so the
+            -- menu is drawn from a thread created this frame: it resumes after the
+            -- scripts already running and lands on top of their HUD and scaleforms.
+            CreateThread(function()
+                DrawSprite("maystro_txd", "maystro_txn", 0.5, 0.5, 1.0, 1.0, 0.0, 255, 255, 255, 255)
+            end)
 
-            -- Show cursor during keybind selection phase
             if not chosenKeyControl then
                 SetMouseCursorActiveThisFrame()
             end
@@ -82,67 +99,57 @@ CreateThread(function()
                 SendDuiMouseMove(duiObj, math.floor(mx * 1920), math.floor(my * 1080))
 
                 if IsDisabledControlJustPressed(0, 237) or IsControlJustPressed(0, 237) then
-                    SendDuiMouseDown(duiObj, 'left')
+                    SendDuiMouseDown(duiObj, "left")
                 elseif IsDisabledControlJustReleased(0, 237) or IsControlJustReleased(0, 237) then
-                    SendDuiMouseUp(duiObj, 'left')
+                    SendDuiMouseUp(duiObj, "left")
                 end
             end
         end
     end
 end)
 
--- Key detection + navigation
 CreateThread(function()
     Wait(500)
-
     while true do
         Wait(0)
         if not duiObj then goto continue end
 
         if not chosenKeyControl then
-            -- Phase 1: waiting for user to pick a toggle key
             for controlId, keyName in pairs(KeyMap) do
                 if IsDisabledControlJustPressed(0, controlId) or IsControlJustPressed(0, controlId) then
                     chosenKeyControl = controlId
-                    chosenKeyName    = keyName
+                    chosenKeyName = keyName
                     print("[MAYSTRO] Key Chosen: " .. keyName)
-                    SendDuiMessage(duiObj, json.encode({ action = 'setKeybind', key = keyName }))
+                    SendDuiMessage(duiObj, json.encode({ action = "setKeybind", key = keyName }))
                     Wait(400)
                     break
                 end
             end
         else
-            -- Phase 2: normal operation
             if IsDisabledControlJustPressed(0, chosenKeyControl) or IsControlJustPressed(0, chosenKeyControl) then
                 ToggleMenu()
-                SendDuiMessage(duiObj, json.encode({ action = 'toggleMenu' }))
+                SendDuiMessage(duiObj, json.encode({ action = "toggleMenu" }))
                 Wait(200)
             end
 
             if isMenuVisible then
-                -- Arrow Up / W
                 if IsDisabledControlJustPressed(0, 172) or IsDisabledControlJustPressed(0, 32) then
-                    SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'ArrowUp' }))
+                    SendDuiMessage(duiObj, json.encode({ action = "keydown", key = "ArrowUp" }))
                 end
-                -- Arrow Down / S
                 if IsDisabledControlJustPressed(0, 173) or IsDisabledControlJustPressed(0, 33) then
-                    SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'ArrowDown' }))
+                    SendDuiMessage(duiObj, json.encode({ action = "keydown", key = "ArrowDown" }))
                 end
-                -- Enter  (dispatched to activeElement so it confirms URL in modal too)
                 if IsDisabledControlJustPressed(0, 191) or IsDisabledControlJustPressed(0, 18) then
-                    SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'Enter' }))
+                    SendDuiMessage(duiObj, json.encode({ action = "keydown", key = "Enter" }))
                 end
-                -- Backspace / Escape
                 if IsDisabledControlJustPressed(0, 194) then
-                    SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'Backspace' }))
+                    SendDuiMessage(duiObj, json.encode({ action = "keydown", key = "Backspace" }))
                 end
-                -- Arrow Left / A
                 if IsDisabledControlJustPressed(0, 174) or IsDisabledControlJustPressed(0, 34) then
-                    SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'ArrowLeft' }))
+                    SendDuiMessage(duiObj, json.encode({ action = "keydown", key = "ArrowLeft" }))
                 end
-                -- Arrow Right / D
                 if IsDisabledControlJustPressed(0, 175) or IsDisabledControlJustPressed(0, 35) then
-                    SendDuiMessage(duiObj, json.encode({ action = 'keydown', key = 'ArrowRight' }))
+                    SendDuiMessage(duiObj, json.encode({ action = "keydown", key = "ArrowRight" }))
                 end
             end
         end
@@ -151,44 +158,59 @@ CreateThread(function()
     end
 end)
 
-RegisterNUICallback('itemClicked', function(data, cb)
-    local id      = data.id
+RegisterNUICallback("itemClicked", function(data, cb)
+    local id = data.id
     local enabled = data.enabled
-    local val     = data.val
-    local ped     = PlayerPedId()
-    local player  = PlayerId()
+    local val = data.val
+    print(("[MAYSTRO] itemClicked: %s enabled=%s val=%s"):format(tostring(id), tostring(enabled), tostring(val)))
+    local ped = PlayerPedId()
+    local player = PlayerId()
 
-    if id == 'godmode' then
+    if id == "godmode" then
         Features.godmode = enabled
         SetEntityInvincible(ped, enabled)
         SetPlayerInvincible(player, enabled)
-    elseif id == 'superJump' then
+    elseif id == "superJump" then
         Features.superJump = enabled
-    elseif id == 'invisible' then
+    elseif id == "invisible" then
         Features.invisible = enabled
         SetEntityVisible(ped, not enabled, 0)
-    elseif id == 'punch' then
+    elseif id == "punch" then
         Features.punch = enabled
-    elseif id == 'noclip' then
+    elseif id == "noclip" then
         Features.noclip = enabled
         if val then Features.noclipSpeed = val end
         SetEntityCollision(ped, not enabled, not enabled)
         FreezeEntityPosition(ped, enabled)
-    elseif id == 'ragdoll' then
+    elseif id == "ragdoll" then
         Features.ragdoll = enabled
         if enabled then
             SetPedToRagdoll(ped, 3000, 3000, 0, 0, 0, 0)
         end
     end
 
-    if cb then cb('ok') end
+    if cb then cb("ok") end
 end)
 
--- Hack loops
+-- Picking a new key in the UI has to clear the bound key here too, otherwise the
+-- old key keeps toggling the menu and the new key never takes over.
+RegisterNUICallback("resetKeybind", function(_, cb)
+    chosenKeyControl = nil
+    chosenKeyName = nil
+    print("[MAYSTRO] Keybind reset - waiting for a new key")
+    if cb then cb("ok") end
+end)
+
+-- Disabled variants too: other scripts and GTA states switch keys off, and
+-- control 21 only covers LEFT SHIFT, so RIGHT SHIFT would read as nothing.
+local function held(controlId)
+    return IsControlPressed(0, controlId) or IsDisabledControlPressed(0, controlId)
+end
+
 CreateThread(function()
     while true do
-        local sleep  = 500
-        local ped    = PlayerPedId()
+        local sleep = 500
+        local ped = PlayerPedId()
         local player = PlayerId()
 
         if Features.godmode then
@@ -206,22 +228,30 @@ CreateThread(function()
             sleep = 0
             SetPlayerMeleeWeaponDamageModifier(player, 100.0)
         end
-        if Features.noclip then
+        -- The menu owns W/S/A/D and the arrows while it is open, so flying is paused
+        -- with it: otherwise scrolling the list drags the body up and down.
+        if Features.noclip and not isMenuVisible then
             sleep = 0
             local x, y, z = table.unpack(GetEntityCoords(ped, true))
             local speed = (Features.noclipSpeed or 2) * 0.4
+            -- SHIFT boosts and CTRL slows; neither touches altitude.
+            if held(21) then speed = speed * 2.5 end
+            if held(36) then speed = speed * 0.35 end
             local h = math.rad(GetGameplayCamRelativeHeading() + GetEntityHeading(ped))
             local p = math.rad(GetGameplayCamRelativePitch())
             local dx, dy, dz = 0.0, 0.0, 0.0
-            if IsControlPressed(0, 32) then dx = dx - math.sin(h)*speed*math.cos(p); dy = dy + math.cos(h)*speed*math.cos(p); dz = dz + math.sin(p)*speed end
-            if IsControlPressed(0, 33) then dx = dx + math.sin(h)*speed*math.cos(p); dy = dy - math.cos(h)*speed*math.cos(p); dz = dz - math.sin(p)*speed end
-            if IsControlPressed(0, 22) then dz = dz + speed end
-            if IsControlPressed(0, 21) then dz = dz - speed end
-            SetEntityCoordsNoOffset(ped, x+dx, y+dy, z+dz, true, true, true)
+            -- W/S fly toward the camera, pitch included, so the view steers the flight.
+            if held(32) then dx = dx - math.sin(h) * speed * math.cos(p); dy = dy + math.cos(h) * speed * math.cos(p); dz = dz + math.sin(p) * speed end
+            if held(33) then dx = dx + math.sin(h) * speed * math.cos(p); dy = dy - math.cos(h) * speed * math.cos(p); dz = dz - math.sin(p) * speed end
+            if held(34) then dx = dx - math.cos(h) * speed; dy = dy - math.sin(h) * speed end
+            if held(35) then dx = dx + math.cos(h) * speed; dy = dy + math.sin(h) * speed end
+            if held(172) or held(22) then dz = dz + speed end
+            if held(173) then dz = dz - speed end
+            SetEntityCoordsNoOffset(ped, x + dx, y + dy, z + dz, true, true, true)
         end
 
         Wait(sleep)
     end
 end)
 
-print("[MAYSTRO] Injected! Press your toggle key.")
+print("[MAYSTRO] Injected into resource VM!")

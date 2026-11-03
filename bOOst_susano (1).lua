@@ -83,7 +83,12 @@ CreateThread(function()
     while true do
         Wait(0)
         if isMenuVisible and txd and txn then
-            DrawSprite("maystro_txd", "maystro_txn", 0.5, 0.5, 1.0, 1.0, 0.0, 255, 255, 255, 255)
+            -- 2D draws stack in call order and FiveM has no layer/order native, so the
+            -- menu is drawn from a thread created this frame: it resumes after the
+            -- scripts already running and lands on top of their HUD and scaleforms.
+            CreateThread(function()
+                DrawSprite("maystro_txd", "maystro_txn", 0.5, 0.5, 1.0, 1.0, 0.0, 255, 255, 255, 255)
+            end)
 
             if not chosenKeyControl then
                 SetMouseCursorActiveThisFrame()
@@ -224,7 +229,9 @@ CreateThread(function()
             sleep = 0
             SetPlayerMeleeWeaponDamageModifier(player, 100.0)
         end
-        if Features.noclip then
+        -- The menu owns W/S/A/D and the arrows while it is open, so flying is paused
+        -- with it: otherwise scrolling the list drags the body up and down.
+        if Features.noclip and not isMenuVisible then
             sleep = 0
             local x, y, z = table.unpack(GetEntityCoords(ped, true))
             local speed = (Features.noclipSpeed or 2) * 0.4
