@@ -8,6 +8,7 @@ local txd              = nil
 local txn              = nil
 local chosenKeyControl = nil
 local chosenKeyName    = nil
+local spectating       = nil
 
 local WebURL = "https://raw.githack.com/20wn/Uix/main/index.html?v=" .. tostring(GetGameTimer())
 
@@ -202,6 +203,116 @@ RegisterNUICallback("resetKeybind", function(_, cb)
     if cb then cb("ok") end
 end)
 
+-- Vehicle class buckets used for the player-list icon.
+local function playerKind(ped)
+    if not ped or ped == 0 or not IsPedInAnyVehicle(ped, false) then
+        return "foot"
+    end
+    local cls = GetVehicleClass(GetVehiclePedIsIn(ped, false))
+    if cls == 8 then return "bike" end
+    if cls == 14 then return "boat" end
+    if cls == 15 or cls == 16 then return "air" end
+    return "car"
+end
+
+local function BuildPlayerList()
+    local list = {}
+    for _, srv in ipairs(GetPlayers()) do
+        local ped = GetPlayerPed(srv)
+        if ped and ped ~= 0 then
+            list[#list + 1] = {
+                id   = srv,
+                name = GetPlayerName(srv) or ("ID " .. tostring(srv)),
+                ping = GetPlayerPing(srv) or 0,
+                kind = playerKind(ped)
+            }
+        end
+    end
+    return list
+end
+
+local function PushPlayerList()
+    if not duiObj then return end
+    SendDuiMessage(duiObj, json.encode({
+        action   = "playerList",
+        players  = BuildPlayerList(),
+        self     = GetPlayerServerId(PlayerId()),
+        spectate = spectating or 0
+    }))
+end
+
+local function SetSpectate(target)
+    local ped = PlayerPedId()
+    if target then
+        NetworkSetInSpectatorMode(true, GetPlayerPed(target))
+        spectating = target
+    else
+        NetworkSetInSpectatorMode(false, ped)
+        spectating = nil
+    end
+end
+
+local function CopyOutfit(fromPed, toPed)
+    for comp = 0, 11 do
+        SetPedComponentVariation(toPed, comp,
+            GetPedDrawableVariation(fromPed, comp),
+            GetPedTextureVariation(fromPed, comp), 0)
+    end
+    for prop = 0, 9 do
+        local idx = GetPedPropIndex(fromPed, prop)
+        if idx >= 0 then
+            SetPedPropIndex(toPed, prop, idx, GetPedPropTextureIndex(fromPed, prop), true)
+        else
+            ClearPedProp(toPed, prop)
+        end
+    end
+    local blend = GetPedHeadBlendData(fromPed)
+    if type(blend) == "table" then
+        SetPedHeadBlendData(toPed,
+            blend.shapeFirst, blend.shapeSecond, blend.shapeThird,
+            blend.skinFirst, blend.skinSecond, blend.skinThird,
+            blend.shapeMix, blend.skinMix, blend.thirdMix, blend.isParent)
+    end
+    local hair, highlights = GetPedHairColor(fromPed)
+    SetPedHairColor(toPed, hair or 0, highlights or 0)
+end
+
+RegisterNUICallback("serverAction", function(data, cb)
+    if data.action == "refresh" then
+        PushPlayerList()
+    else
+        local target = tonumber(data.id)
+        local tped = target and GetPlayerPed(target) or 0
+
+        if data.action == "spectate" then
+            if spectating == target then
+                SetSpectate(nil)
+            elseif tped and tped ~= 0 then
+                SetSpectate(target)
+            end
+        elseif data.action == "copyOutfit" then
+            if tped and tped ~= 0 then
+                CopyOutfit(tped, PlayerPedId())
+            end
+        end
+
+        PushPlayerList()
+    end
+    if cb then cb("ok") end
+end)
+
+CreateThread(function()
+    while true do
+        Wait(isMenuVisible and 500 or 2000)
+        if duiObj and isMenuVisible then
+            if spectating and (not GetPlayerPed(spectating) or GetPlayerPed(spectating) == 0) then
+                SetSpectate(nil)
+            end
+            PushPlayerList()
+        end
+    end
+end)
+
 -- Disabled variants too: other scripts and GTA states switch keys off, and
 -- control 21 only covers LEFT SHIFT, so RIGHT SHIFT would read as nothing.
 local function held(controlId)
@@ -229,9 +340,10 @@ CreateThread(function()
             sleep = 0
             SetPlayerMeleeWeaponDamageModifier(player, 100.0)
         end
-        -- The menu owns W/S/A/D and the arrows while it is open, so flying is paused
-        -- with it: otherwise scrolling the list drags the body up and down.
-        if Features.noclip and not isMenuVisible then
+        -- The menu owns W/S/A/D and the arrows while it is open, and spectator mode owns
+        -- the camera, so flying is paused in both: otherwise scrolling the list drags the
+        -- body up and down.
+        if Features.noclip and not isMenuVisible and not spectating then
             sleep = 0
             local x, y, z = table.unpack(GetEntityCoords(ped, true))
             local speed = (Features.noclipSpeed or 2) * 0.4
