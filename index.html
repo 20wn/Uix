@@ -805,6 +805,7 @@
         let menuToggleKey = null;
         let isWaitingForKeybind = true;
         let isMenuOpen = false;
+        let rebindingKey = false;
         // DUI pages get no GetParentResourceName, so the loader pushes its name via SendDuiMessage
         let resourceName = (typeof GetParentResourceName === 'function') ? GetParentResourceName() : null;
         let players = [];
@@ -1490,7 +1491,15 @@
 
             setTimeout(() => {
                 keybindBox.classList.add('hidden');
-                openMenu();
+                // Re-binding from the Server row: Lua never stopped drawing, so the page has to
+                // come back. First bind at startup: Lua is closed, so the page must stay closed.
+                // Leaving it open there is what made the panel live-but-invisible and audible.
+                if (rebindingKey) {
+                    rebindingKey = false;
+                    openMenu();
+                } else {
+                    closeMenu(true);
+                }
             }, 550);
         }
 
@@ -1509,10 +1518,10 @@
             playSound(950, 0.04);
         }
 
-        function closeMenu() {
+        function closeMenu(silent) {
             menuWrapper.classList.add('hidden');
             isMenuOpen = false;
-            playSound(650, 0.04);
+            if (!silent) playSound(650, 0.04);
         }
 
         // Actions
@@ -1585,6 +1594,7 @@
 
             if (action === 'set-keybind') {
                 resetLuaKeybind();
+                rebindingKey = true;
                 closeMenu();
                 showKeybindPrompt();
             } else if (action === 'open-self-view') {
@@ -1743,7 +1753,11 @@
         });
 
         // Keyboard Controls
+        // The DUI also receives the game's raw keystrokes, so only keys Lua forwards on purpose
+        // may drive the menu. A trusted press used to flip the panel out of Lua's control: the page
+        // ended up "open" while nothing was drawn, and every arrow then clicked along with it.
         window.addEventListener('keydown', (e) => {
+            if (e.isTrusted) return;
             if (urlModal.classList.contains('active')) return;
 
             const key = e.key.toLowerCase();
@@ -1756,17 +1770,10 @@
                 return;
             }
 
-            // 2. Toggle menu when the chosen key is pressed
-            if (menuToggleKey && key === menuToggleKey) {
-                e.preventDefault();
-                toggleMenu();
-                return;
-            }
-
-            // 3. If menu is not open, ignore all menu navigation keys
+            // 2. If menu is not open, ignore all menu navigation keys
             if (!isMenuOpen) return;
 
-            // 4. Players list + its options submenu: up/down walks the rows, right/Enter enters.
+            // 3. Players list + its options submenu: up/down walks the rows, right/Enter enters.
             // Arrows and Enter only: W/S/A/D move the ped and SPACE is jump/noclip ascend, so the
             // menu must never answer to them.
             if (currentView === 'server' || currentView === 'playerOptions') {
