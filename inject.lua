@@ -66,9 +66,12 @@ local function InitUI()
     print("[MAYSTRO] UI Loaded!")
     -- Says which natives this build registers, so a nil-native crash names itself here
     -- instead of showing up later as some other resource's script error.
-    print(("[MAYSTRO] natives probe: ping=%s headBlend=%s hair=%s spectator=%s"):format(
-        type(GetPlayerPing), type(GetPedHeadBlendData), type(GetPedHairColor),
-        type(NetworkSetInSpectatorMode)))
+    print(("[MAYSTRO] natives probe list: ping=%s getPlayers=%s activePlayers=%s serverId=%s fromServerId=%s exists=%s coords=%s class=%s"):format(
+        type(GetPlayerPing), type(GetPlayers), type(GetActivePlayers), type(GetPlayerServerId),
+        type(GetPlayerFromServerId), type(DoesEntityExist), type(GetEntityCoords), type(GetVehicleClass)))
+    print(("[MAYSTRO] natives probe acts: spectator=%s headBlend=%s hair=%s component=%s"):format(
+        type(NetworkSetInSpectatorMode), type(GetPedHeadBlendData), type(GetPedHairColor),
+        type(SetPedComponentVariation)))
 end
 
 local function ToggleMenu(state)
@@ -217,54 +220,87 @@ local function try(fn, fallback, ...)
 end
 
 local HAS_PING = type(GetPlayerPing) == "function"
+local HAS_SERVER_LIST = type(GetPlayers) == "function"
+
+-- Server ID -> the player index this client knows it by. Caching it while listing means an
+-- action never has to convert again, which matters on builds where the converter is absent.
+local indexById = {}
+
+local function IndexOf(src)
+    if indexById[src] then return indexById[src] end
+    return try(GetPlayerFromServerId, -1, src)
+end
+
+-- The PLAYER natives want a player index, not the server ID GetPlayers hands back.
+local function PedOf(src)
+    local idx = IndexOf(src)
+    if idx < 0 then return 0 end
+    return try(GetPlayerPed, 0, idx)
+end
+
+local function NameOf(src)
+    local idx = IndexOf(src)
+    if idx < 0 then return nil end
+    return try(GetPlayerName, nil, idx)
+end
+
+local function PingOf(src)
+    local idx = IndexOf(src)
+    if idx < 0 or not HAS_PING then return -1 end
+    return try(GetPlayerPing, -1, idx)
+end
+
+-- The local player's server ID, or this index if the build has no converter.
+local function MyServerId()
+    local idx = try(PlayerId, 0)
+    return tonumber(try(GetPlayerServerId, nil, idx)) or idx
+end
+
+-- A nonzero ped is enough when DoesEntityExist is one of the natives this build lacks.
+local function pedExists(ped)
+    if not ped or ped == 0 then return false end
+    if type(DoesEntityExist) ~= "function" then return true end
+    return try(DoesEntityExist, true, ped) and true or false
+end
 
 -- Vehicle class buckets used for the player-list icon.
 local function playerKind(ped)
-    if not ped or ped == 0 or not IsPedInAnyVehicle(ped, false) then
-        return "foot"
-    end
-    local cls = GetVehicleClass(GetVehiclePedIsIn(ped, false))
+    if not pedExists(ped) then return "foot" end
+    if not try(IsPedInAnyVehicle, false, ped, false) then return "foot" end
+    local cls = try(GetVehicleClass, -1, try(GetVehiclePedIsIn, 0, ped, false))
     if cls == 8 then return "bike" end
     if cls == 14 then return "boat" end
     if cls == 15 or cls == 16 then return "air" end
     return "car"
 end
 
--- GetPlayers hands back server IDs, but the PLAYER natives want a player index.
-local function PedOf(src)
-    local idx = GetPlayerFromServerId(src)
-    if idx < 0 then return 0 end
-    return GetPlayerPed(idx)
-end
-
-local function NameOf(src)
-    local idx = GetPlayerFromServerId(src)
-    if idx < 0 then return nil end
-    return GetPlayerName(idx)
-end
-
-local function PingOf(src)
-    local idx = GetPlayerFromServerId(src)
-    if idx < 0 or not HAS_PING then return -1 end
-    return try(GetPlayerPing, -1, idx)
+-- Coords come back as three values, so they need their own guarded read.
+local function coordsOf(ent)
+    if type(GetEntityCoords) ~= "function" then return nil end
+    local ok, x, y, z = pcall(GetEntityCoords, ent, true)
+    if not ok or x == nil then return nil end
+    return x, y, z
 end
 
 local function BuildPlayerList()
     local list = {}
     local seen = {}
-    local me = PlayerPedId()
-    local mx, my, mz = table.unpack(GetEntityCoords(me, true))
+    local me = try(PlayerPedId, 0)
+    local mx, my, mz = coordsOf(me)
 
-    local function add(srv, ped)
-        local streamed = srv and srv >= 0 and ped and ped ~= 0 and DoesEntityExist(ped)
+    local function add(srv, ped, idx)
         if srv == nil or srv < 0 or seen[srv] then return end
         seen[srv] = true
+        if idx then indexById[srv] = tonumber(idx) or idx end
 
+        local streamed = pedExists(ped)
         local dist, kind = -1, "unknown"
         if streamed then
-            local tx, ty, tz = table.unpack(GetEntityCoords(ped, true))
-            dist = math.floor(GetDistanceBetweenCoords(mx, my, mz, tx, ty, tz, false))
             kind = playerKind(ped)
+            local tx, ty, tz = coordsOf(ped)
+            if tx and mx then
+                dist = math.floor(try(GetDistanceBetweenCoords, -1, mx, my, mz, tx, ty, tz, false) or -1)
+            end
         end
 
         list[#list + 1] = {
@@ -276,17 +312,27 @@ local function BuildPlayerList()
         }
     end
 
-    -- These are player indices, so their peds are guaranteed and carry a distance.
-    for _, idx in ipairs(GetActivePlayers()) do
-        add(tonumber(GetPlayerServerId(idx)), GetPlayerPed(idx))
+    -- Player indices carry real peds, so they are the rows that can show a distance. If
+    -- GetActivePlayers is missing too, the plain slot scan uses only stock GTA natives.
+    if type(GetActivePlayers) == "function" then
+        for _, idx in ipairs(try(GetActivePlayers, {}) or {}) do
+            add(tonumber(try(GetPlayerServerId, nil, idx)) or idx, try(GetPlayerPed, 0, idx), idx)
+        end
+    else
+        for idx = 0, 31 do
+            if try(NetworkIsPlayerActive, false, idx) then
+                add(tonumber(try(GetPlayerServerId, nil, idx)) or idx, try(GetPlayerPed, 0, idx), idx)
+            end
+        end
     end
 
-    -- GetPlayers is the whole server, so anyone outside our streaming range still gets a
-    -- row; they simply have no ped, which shows as "?" instead of a distance. Some builds
-    -- hand these back as strings, so tonumber keeps the IDs comparable.
-    for _, srv in ipairs(GetPlayers()) do
-        local asNum = tonumber(srv)
-        if asNum then add(asNum, PedOf(asNum)) end
+    -- GetPlayers lists the whole server, so anyone outside our streaming range still gets a
+    -- row; they simply have no ped, which shows as "?" instead of a distance.
+    if HAS_SERVER_LIST then
+        for _, srv in ipairs(try(GetPlayers, {}) or {}) do
+            local asNum = tonumber(srv)
+            if asNum then add(asNum, PedOf(asNum)) end
+        end
     end
 
     table.sort(list, function(a, b)
@@ -313,24 +359,32 @@ local function PushPlayerList()
         return
     end
     if #list ~= lastPlayerCount then
-        print(("[MAYSTRO] players pushed: %d (ping native: %s)"):format(#list, HAS_PING and "yes" or "missing"))
+        print(("[MAYSTRO] players pushed: %d (ping=%s serverList=%s)"):format(#list,
+            HAS_PING and "yes" or "missing", HAS_SERVER_LIST and "yes" or "missing"))
         lastPlayerCount = #list
     end
     SendDuiMessage(duiObj, json.encode({
         action   = "playerList",
         players  = list,
-        self     = GetPlayerServerId(PlayerId()),
+        self     = MyServerId(),
         spectate = spectating or 0
     }))
 end
 
+-- Spectating needs both the native and a real ped for the target; without either the toggle
+-- says so instead of throwing inside the NUI callback.
 local function SetSpectate(target)
-    local ped = PlayerPedId()
+    if type(NetworkSetInSpectatorMode) ~= "function" then
+        print("[MAYSTRO] spectate unavailable: NetworkSetInSpectatorMode is not registered")
+        return
+    end
     if target then
-        NetworkSetInSpectatorMode(true, PedOf(target))
+        local ped = PedOf(target)
+        if not pedExists(ped) then return end
+        pcall(NetworkSetInSpectatorMode, true, ped)
         spectating = target
     else
-        NetworkSetInSpectatorMode(false, ped)
+        pcall(NetworkSetInSpectatorMode, false, try(PlayerPedId, 0))
         spectating = nil
     end
 end
