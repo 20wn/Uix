@@ -732,19 +732,20 @@ CreateThread(function()
             sleep = 0
             local x, y, z = table.unpack(GetEntityCoords(ped, true))
             local speed = (Features.noclipSpeed or 2) * 0.4
-            -- SHIFT boosts and CTRL slows; neither touches altitude.
-            if held(21) then speed = speed * 2.5 end
-            if held(36) then speed = speed * 0.35 end
             local h = math.rad(GetGameplayCamRelativeHeading() + GetEntityHeading(ped))
             local p = math.rad(GetGameplayCamRelativePitch())
             local dx, dy, dz = 0.0, 0.0, 0.0
-            -- W/S fly toward the camera, pitch included, so the view steers the flight.
-            if held(32) then dx = dx - math.sin(h) * speed * math.cos(p); dy = dy + math.cos(h) * speed * math.cos(p); dz = dz + math.sin(p) * speed end
-            if held(33) then dx = dx + math.sin(h) * speed * math.cos(p); dy = dy - math.cos(h) * speed * math.cos(p); dz = dz - math.sin(p) * speed end
-            if held(34) then dx = dx - math.cos(h) * speed; dy = dy - math.sin(h) * speed end
-            if held(35) then dx = dx + math.cos(h) * speed; dy = dy + math.sin(h) * speed end
-            if held(172) or held(22) then dz = dz + speed end
-            if held(173) then dz = dz - speed end
+            -- Arrows do the same thing as W/S/A/D. The menu only consumes the arrows while it is
+            -- open and flying is paused then, so nothing fights over them.
+            if held(32) or held(172) then dx = dx - math.sin(h) * speed * math.cos(p); dy = dy + math.cos(h) * speed * math.cos(p); dz = dz + math.sin(p) * speed end
+            if held(33) or held(173) then dx = dx + math.sin(h) * speed * math.cos(p); dy = dy - math.cos(h) * speed * math.cos(p); dz = dz - math.sin(p) * speed end
+            if held(34) or held(174) then dx = dx - math.cos(h) * speed; dy = dy - math.sin(h) * speed end
+            if held(35) or held(175) then dx = dx + math.cos(h) * speed; dy = dy + math.sin(h) * speed end
+            -- SPACE rises, SHIFT sinks (LEFT CTRL too, since control 21 only covers LEFT SHIFT).
+            -- There is no hidden speed modifier: SHIFT used to boost, which meant pressing it on
+            -- the way down did nothing and the ped stayed on the ground.
+            if held(22) then dz = dz + speed end
+            if held(21) or held(36) then dz = dz - speed end
             SetEntityCoordsNoOffset(ped, x + dx, y + dy, z + dz, true, true, true)
         end
 
