@@ -198,6 +198,15 @@
             display: flex;
             flex-direction: column;
             gap: 2px;
+            /* The panel keeps one height; a long player list scrolls inside it. */
+            max-height: 380px;
+            overflow: hidden;
+        }
+
+        #itemsContainer {
+            flex-shrink: 0;
+            transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+            will-change: transform;
         }
 
         .menu-view.hidden {
@@ -297,6 +306,7 @@
             display: flex;
             align-items: center;
             gap: 9px;
+            min-width: 0;
         }
 
         .item-icon {
@@ -324,6 +334,9 @@
         .item-text {
             font-size: 13.5px;
             line-height: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .arrow-svg {
@@ -399,7 +412,7 @@
             font-size: 11.5px;
             font-weight: 700;
             color: rgba(255, 255, 255, 0.5);
-            min-width: 34px;
+            min-width: 42px;
             text-align: right;
         }
 
@@ -407,46 +420,9 @@
             color: rgba(255, 255, 255, 0.8);
         }
 
-        .item-actions {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .action-chip {
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.2px;
-            white-space: nowrap;
-            color: rgba(255, 255, 255, 0.4);
-            border: 1px solid rgba(255, 255, 255, 0.14);
-            background: rgba(0, 0, 0, 0.28);
-            transition: color 0.15s, border-color 0.15s, background 0.15s;
-        }
-
-        .action-chip.on {
-            color: #000000;
-            border-color: var(--theme-bright);
-            background: var(--theme-color);
-        }
-
-        .action-chip.focus {
-            color: #ffffff;
-            border-color: var(--theme-bright);
-            box-shadow: 0 0 8px var(--theme-color);
-        }
-
-        .action-chip.on.focus {
-            color: #000000;
-            box-shadow: 0 0 8px var(--theme-bright);
-        }
-
         /* Players the game has not streamed yet have no ped, so their actions cannot run. */
-        .action-chip.dim {
-            opacity: 0.25;
-            pointer-events: none;
+        .menu-item.disabled {
+            opacity: 0.4;
         }
 
         .item-stepper {
@@ -836,10 +812,10 @@
         let players = [];
         let selfId = null;
         let spectateId = 0;
-        let serverFocus = 'player'; // 'player' = list, 'controls' = the action chips
-        let actionIndex = 0;
+        let optionsPlayer = null; // the player whose action submenu is open
         let playersSignature = '';
         let suppressSelectionSound = false;
+        let listOffset = 0; // px the item list is scrolled up inside the fixed-height view
 
         const i18n = {
             en: {
@@ -882,7 +858,7 @@
                 noPlayers: 'No players in range',
                 you: 'you',
                 spectate: 'Spectate',
-                spectating: 'Stop',
+                spectating: 'Spectating',
                 copyOutfit: 'Copy Outfit'
             },
             ar: {
@@ -925,7 +901,7 @@
                 noPlayers: 'لا يوجد لاعبون',
                 you: 'أنت',
                 spectate: 'مراقبة',
-                spectating: 'إيقاف',
+                spectating: 'قيد المراقبة',
                 copyOutfit: 'نسخ الملابس'
             }
         };
@@ -1077,8 +1053,24 @@
                 dist: p.dist,
                 streamed: p.kind !== 'unknown',
                 isSelf: p.id === selfId,
-                action: 'select-player'
+                action: 'open-player-options'
             }));
+        }
+
+        // Actions live in their own submenu so a row stays one clean line.
+        function getPlayerOptionItems() {
+            const t = i18n[currentLang];
+            const player = players.find(p => p.id === optionsPlayer);
+            if (!player) return [{ text: t.noPlayers, action: 'none' }];
+            const streamed = player.kind !== 'unknown';
+            return playerActions(player.id).map(a => ({
+                text: a.label,
+                action: 'run-player-option',
+                optionKey: a.key,
+                playerId: player.id,
+                disabled: !streamed,
+                toggle: a.key === 'spectate' ? a.on : undefined
+            })).concat([{ text: t.back, action: 'back-to-players' }]);
         }
 
         function getSettingsItems() {
@@ -1094,6 +1086,49 @@
 
         function getItems() {
             return itemsContainer.querySelectorAll('.menu-item');
+        }
+
+        function setMarker(el, y, h, immediate) {
+            if (!el) return;
+            if (immediate) {
+                const original = el.style.transition;
+                el.style.transition = 'none';
+                el.style.transform = `translateY(${y}px)`;
+                el.style.height = `${h}px`;
+                el.style.opacity = '1';
+                el.offsetHeight; // force reflow
+                el.style.transition = original;
+            } else {
+                el.style.transform = `translateY(${y}px)`;
+                el.style.height = `${h}px`;
+                el.style.opacity = '1';
+            }
+        }
+
+        // The panel has one fixed height, so a list taller than it scrolls inside instead of
+        // stretching the menu down the screen.
+        function scrollListTo(index, immediate) {
+            const el = getItems()[index];
+            if (!el) return;
+            const viewH = menuItemsView.clientHeight;
+            const listH = itemsContainer.scrollHeight;
+            const top = el.offsetTop - itemsContainer.offsetTop;
+            const bottom = top + el.offsetHeight;
+
+            let off = listOffset;
+            if (bottom - off > viewH - 8) off = bottom - viewH + 8;
+            if (top - off < 4) off = top - 4;
+            listOffset = Math.max(0, Math.min(off, Math.max(0, listH - viewH)));
+
+            if (immediate) {
+                const original = itemsContainer.style.transition;
+                itemsContainer.style.transition = 'none';
+                itemsContainer.style.transform = `translateY(${-listOffset}px)`;
+                itemsContainer.offsetHeight; // force reflow
+                itemsContainer.style.transition = original;
+            } else {
+                itemsContainer.style.transform = `translateY(${-listOffset}px)`;
+            }
         }
 
         function updateSelection(newIndex, immediate = false) {
@@ -1113,40 +1148,20 @@
 
             const activeItem = items[activeIndex];
             if (activeItem) {
-                const viewRect = menuItemsView.getBoundingClientRect();
-                const itemRect = activeItem.getBoundingClientRect();
-                const topOffset = itemRect.top - viewRect.top;
+                scrollListTo(activeIndex, immediate);
 
-                if (selectionPill) {
-                    if (immediate) {
-                        const originalTransition = selectionPill.style.transition;
-                        selectionPill.style.transition = 'none';
-                        selectionPill.style.transform = `translateY(${topOffset}px)`;
-                        selectionPill.style.height = `${activeItem.offsetHeight}px`;
-                        selectionPill.style.opacity = '1';
-                        selectionPill.offsetHeight; // force reflow
-                        selectionPill.style.transition = originalTransition;
-                    } else {
-                        selectionPill.style.transform = `translateY(${topOffset}px)`;
-                        selectionPill.style.height = `${activeItem.offsetHeight}px`;
-                        selectionPill.style.opacity = '1';
-                    }
-                }
+                const topOffset = activeItem.getBoundingClientRect().top - menuItemsView.getBoundingClientRect().top;
+                setMarker(selectionPill, topOffset, activeItem.offsetHeight, immediate);
 
-                if (sideScrollIndicator) {
-                    if (immediate) {
-                        const originalTransition = sideScrollIndicator.style.transition;
-                        sideScrollIndicator.style.transition = 'none';
-                        sideScrollIndicator.style.transform = `translateY(${topOffset}px)`;
-                        sideScrollIndicator.style.height = `${activeItem.offsetHeight}px`;
-                        sideScrollIndicator.style.opacity = '1';
-                        sideScrollIndicator.offsetHeight; // force reflow
-                        sideScrollIndicator.style.transition = originalTransition;
-                    } else {
-                        sideScrollIndicator.style.transform = `translateY(${topOffset}px)`;
-                        sideScrollIndicator.style.height = `${activeItem.offsetHeight}px`;
-                        sideScrollIndicator.style.opacity = '1';
-                    }
+                const viewH = menuItemsView.clientHeight;
+                const listH = itemsContainer.scrollHeight;
+                if (listH > viewH + 4) {
+                    // A scrolling list uses the rail as a thumb, not as a row marker.
+                    const thumb = Math.max(24, viewH * viewH / listH);
+                    const travel = Math.max(1, listH - viewH);
+                    setMarker(sideScrollIndicator, 4 + (listOffset / travel) * (viewH - thumb - 12), thumb, immediate);
+                } else {
+                    setMarker(sideScrollIndicator, topOffset, activeItem.offsetHeight, immediate);
                 }
             }
 
@@ -1159,6 +1174,7 @@
             else if (currentView === 'settings') items = getSettingsItems();
             else if (currentView === 'self') items = getSelfItems();
             else if (currentView === 'server') items = getServerItems();
+            else if (currentView === 'playerOptions') items = getPlayerOptionItems();
 
             const t = i18n[currentLang];
 
@@ -1167,6 +1183,10 @@
                 else if (currentView === 'settings') tabText.textContent = t.tabSettings;
                 else if (currentView === 'self') tabText.textContent = t.tabSelf;
                 else if (currentView === 'server') tabText.textContent = t.tabPlayers;
+                else if (currentView === 'playerOptions') {
+                    const chosen = players.find(p => p.id === optionsPlayer);
+                    tabText.textContent = chosen ? chosen.name : t.tabPlayers;
+                }
             }
 
             if (modalTitleText) modalTitleText.textContent = t.modalTitle;
@@ -1176,6 +1196,11 @@
                 startTypewriter();
             }
 
+            listOffset = 0;
+            itemsContainer.style.transition = 'none';
+            itemsContainer.style.transform = 'translateY(0px)';
+            itemsContainer.offsetHeight; // do not animate the reset back to the top
+            itemsContainer.style.transition = '';
             itemsContainer.innerHTML = '';
             let selectableIdx = 0;
 
@@ -1190,9 +1215,15 @@
 
                 const itemIndex = selectableIdx++;
                 const itemEl = document.createElement('div');
-                itemEl.className = 'menu-item' + (itemIndex === targetIndex ? ' active' : '');
+                itemEl.className = 'menu-item'
+                    + (itemIndex === targetIndex ? ' active' : '')
+                    + (item.disabled ? ' disabled' : '');
                 itemEl.setAttribute('data-action', item.action || 'none');
                 if (item.id) itemEl.setAttribute('data-id', item.id);
+                if (item.playerId !== undefined) itemEl.setAttribute('data-player', item.playerId);
+                if (item.optionKey) itemEl.setAttribute('data-option', item.optionKey);
+
+                const arrowHtml = `<span class="arrow-svg"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg></span>`;
 
                 let rightHtml = '';
                 if (item.type === 'toggle') {
@@ -1215,18 +1246,26 @@
                         </div>
                     `;
                 } else if (item.isPlayer) {
-                    const acts = playerActions(item.playerId);
-                    const focused = serverFocus === 'controls' && itemIndex === activeIndex;
                     const range = item.isSelf ? t.you : (item.dist >= 0 ? item.dist + 'm' : '?');
                     rightHtml = `
                         <div class="item-controls">
                             <span class="player-ping">${range}</span>
                             <span class="player-ping">${item.ping >= 0 ? item.ping + 'ms' : ''}</span>
-                            <div class="item-actions">${acts.map((a, i) => `<span class="action-chip ${a.on ? 'on' : ''} ${focused && i === actionIndex && item.streamed ? 'focus' : ''} ${item.streamed ? '' : 'dim'}">${a.label}</span>`).join('')}</div>
+                            ${arrowHtml}
                         </div>
                     `;
+                } else if (item.toggle !== undefined) {
+                    rightHtml = `
+                        <div class="item-controls">
+                            <div class="toggle-switch ${item.toggle ? 'active' : ''}">
+                                <div class="toggle-knob"></div>
+                            </div>
+                        </div>
+                    `;
+                } else if (item.optionKey || item.action === 'back-to-players') {
+                    rightHtml = '';
                 } else {
-                    rightHtml = `<span class="arrow-svg"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg></span>`;
+                    rightHtml = arrowHtml;
                 }
 
                 let iconLeftHtml = '';
@@ -1258,21 +1297,6 @@
                             updateSelection(idx);
                             cycleValue(idx);
                         }
-                    });
-                }
-
-                if (item.isPlayer) {
-                    itemEl.querySelectorAll('.action-chip').forEach((chip, ci) => {
-                        chip.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            const idx = Array.from(getItems()).indexOf(itemEl);
-                            if (idx === -1) return;
-                            activeIndex = idx;
-                            serverFocus = 'controls';
-                            actionIndex = ci;
-                            renderCurrentView(idx);
-                            runServerAction();
-                        });
                     });
                 }
 
@@ -1508,12 +1532,18 @@
             }).catch(() => console.warn('[MAYSTRO] serverAction callback failed'));
         }
 
-        function runServerAction() {
-            const p = players[activeIndex];
-            if (!p) return;
-            const act = playerActions(p.id)[actionIndex];
-            if (!act) return;
-            sendServerAction(act.key, p.id);
+        // Leaving the submenu puts the highlight back on the player it was opened from.
+        function backToPlayers() {
+            currentView = 'server';
+            const idx = players.findIndex(p => p.id === optionsPlayer);
+            renderCurrentView(idx > 0 ? idx : 0);
+        }
+
+        function runPlayerOption(itemEl) {
+            const key = itemEl.getAttribute('data-option');
+            const id = Number(itemEl.getAttribute('data-player'));
+            if (!key || !isFinite(id)) return;
+            sendServerAction(key, id);
             playSound(1350, 0.05);
         }
 
@@ -1524,8 +1554,8 @@
             if (sig === playersSignature) return;
             playersSignature = sig;
             players = list;
-            if (currentView === 'server') {
-                if (activeIndex >= players.length) activeIndex = Math.max(0, players.length - 1);
+            if (currentView === 'server' || currentView === 'playerOptions') {
+                if (activeIndex >= getItems().length) activeIndex = Math.max(0, getItems().length - 1);
                 suppressSelectionSound = true;
                 renderCurrentView(activeIndex);
                 suppressSelectionSound = false;
@@ -1545,16 +1575,22 @@
                 renderCurrentView(0);
             } else if (action === 'open-server-view') {
                 currentView = 'server';
-                serverFocus = 'player';
-                actionIndex = 0;
                 renderCurrentView(0);
                 sendServerAction('refresh', 0);
-            } else if (action === 'select-player') {
-                const idx = Array.from(getItems()).indexOf(item);
-                if (idx !== -1) activeIndex = idx;
-                serverFocus = 'controls';
-                actionIndex = 0;
-                renderCurrentView(activeIndex);
+            } else if (action === 'open-player-options') {
+                const raw = item.getAttribute('data-player');
+                if (raw === null) return;
+                optionsPlayer = Number(raw);
+                currentView = 'playerOptions';
+                renderCurrentView(0);
+            } else if (action === 'run-player-option') {
+                if (item.classList.contains('disabled')) {
+                    playSound(420, 0.05);
+                    return;
+                }
+                runPlayerOption(item);
+            } else if (action === 'back-to-players') {
+                backToPlayers();
             } else if (action === 'open-settings-view') {
                 currentView = 'settings';
                 renderCurrentView(0);
@@ -1713,43 +1749,29 @@
             // 3. If menu is not open, ignore all menu navigation keys
             if (!isMenuOpen) return;
 
-            // 4. Players view: up/down pick a player, left/right move through their controls
-            if (currentView === 'server') {
-                const lastAction = playerActions((players[activeIndex] || {}).id).length - 1;
+            // 4. Players list + its options submenu: up/down walks the rows, right/Enter enters
+            if (currentView === 'server' || currentView === 'playerOptions') {
+                const items = getItems();
+                const isRight = e.key === 'ArrowRight' || key === 'd';
+                const isLeft = e.key === 'ArrowLeft' || key === 'a';
                 if (e.key === 'ArrowDown' || key === 's') {
                     e.preventDefault();
                     updateSelection(activeIndex + 1);
                 } else if (e.key === 'ArrowUp' || key === 'w') {
                     e.preventDefault();
                     updateSelection(activeIndex - 1);
-                } else if (e.key === 'ArrowRight' || key === 'd') {
+                } else if (isLeft || e.key === 'Backspace' || e.key === 'Escape') {
                     e.preventDefault();
-                    if (serverFocus === 'player') { serverFocus = 'controls'; actionIndex = 0; }
-                    else actionIndex = Math.min(actionIndex + 1, lastAction);
-                    renderCurrentView(activeIndex);
-                } else if (e.key === 'ArrowLeft' || key === 'a') {
-                    e.preventDefault();
-                    if (serverFocus === 'controls' && actionIndex > 0) actionIndex--;
-                    else serverFocus = 'player';
-                    renderCurrentView(activeIndex);
-                } else if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    if (serverFocus === 'player') {
-                        serverFocus = 'controls';
-                        actionIndex = 0;
-                        renderCurrentView(activeIndex);
-                    } else {
-                        runServerAction();
-                    }
-                } else if (e.key === 'Backspace' || e.key === 'Escape') {
-                    e.preventDefault();
-                    if (serverFocus === 'controls') {
-                        serverFocus = 'player';
-                        renderCurrentView(activeIndex);
-                    } else {
+                    if (currentView === 'playerOptions') backToPlayers();
+                    else {
                         currentView = 'main';
                         renderCurrentView(1);
                     }
+                    playSound(680, 0.05);
+                } else if (e.key === 'Enter' || e.key === ' ' || isRight) {
+                    e.preventDefault();
+                    if (currentView === 'playerOptions' && isRight) return;
+                    if (items[activeIndex]) executeAction(items[activeIndex]);
                 }
                 return;
             }
