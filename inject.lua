@@ -94,7 +94,11 @@ local function StartDrawThread()
             -- Checked right after the wait: a thread that only finds out at the loop top
             -- would still draw one more frame on top of the newer one.
             if drawGen ~= myGen then return end
-            if not (isMenuVisible and txd and txn) then goto continue end
+            if not (txd and txn) then goto continue end
+            -- The page shows either the menu or the "press a key" prompt, and a prompt nothing
+            -- ever draws is a prompt nobody sees: right after an injection he would be pressing
+            -- keys with no feedback at all and conclude the UI is broken.
+            if not (isMenuVisible or chosenKeyControl == nil) then goto continue end
 
             DrawSprite("maystro_txd", "maystro_txn", 0.5, 0.5, 1.0, 1.0, 0.0, 255, 255, 255, 255)
 
@@ -128,6 +132,12 @@ local function ToggleMenu(state)
     SetNuiFocus(false, false)
     -- Opening restarts the draw thread so this menu becomes the newest one in the VM.
     if isMenuVisible then StartDrawThread() end
+    if duiObj then
+        -- openMenu/closeMenu set the page's state instead of flipping it, so a DUI still serving
+        -- an older cached copy cannot end up hidden while the game is drawing it (that reads as
+        -- "the menu never opens").
+        SendDuiMessage(duiObj, json.encode({ action = isMenuVisible and "openMenu" or "closeMenu" }))
+    end
     print(isMenuVisible and "[MAYSTRO] Menu Opened" or "[MAYSTRO] Menu Closed")
 end
 
@@ -157,7 +167,6 @@ CreateThread(function()
         else
             if IsDisabledControlJustPressed(0, chosenKeyControl) or IsControlJustPressed(0, chosenKeyControl) then
                 ToggleMenu()
-                SendDuiMessage(duiObj, json.encode({ action = "toggleMenu" }))
                 Wait(200)
             end
 
