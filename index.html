@@ -1335,11 +1335,21 @@
             }).catch(() => console.warn('[MAYSTRO] itemClicked callback failed'));
         }
 
+        function resetLuaKeybind() {
+            if (!resourceName) return;
+            fetch(`https://${resourceName}/resetKeybind`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}'
+            }).catch(() => console.warn('[MAYSTRO] resetKeybind callback failed'));
+        }
+
         function executeAction(item) {
             const action = item.getAttribute('data-action');
             playSound(1150, 0.06);
 
             if (action === 'set-keybind') {
+                resetLuaKeybind();
                 closeMenu();
                 showKeybindPrompt();
             } else if (action === 'open-self-view') {
@@ -1552,7 +1562,8 @@
         if (keybindBox) {
             keybindBox.style.cursor = 'pointer';
             keybindBox.addEventListener('click', () => {
-                setMenuKeybind('f5');
+                resetLuaKeybind();
+                showKeybindPrompt();
             });
         }
         if (document.fonts) {
