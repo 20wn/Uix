@@ -1213,6 +1213,22 @@
             };
         }
 
+        function pasteIntoBanner(text) {
+            text = (text || '').trim();
+            if (!text) {
+                bannerUrlInput.placeholder = 'Clipboard empty — type the link';
+                setTimeout(() => { bannerUrlInput.placeholder = 'Ctrl+V / Paste Link [Enter]...'; }, 1800);
+                return;
+            }
+            if (/^(https?:\/\/|data:image\/)/i.test(text)) {
+                urlModal.classList.remove('active');
+                bannerUrlInput.value = '';
+                updateBanner(text);
+            } else {
+                bannerUrlInput.value = text;
+            }
+        }
+
         let typewriterTimer = null;
 
         function startTypewriter() {
@@ -1450,6 +1466,8 @@
                 // dispatch to active element first (e.g. banner input), then window
                 const _target = (document.activeElement && document.activeElement !== document.body) ? document.activeElement : window;
                 _target.dispatchEvent(new KeyboardEvent('keydown', { key: data.key, bubbles: true, cancelable: true }));
+            } else if (data.action === 'pasteClipboard') {
+                pasteIntoBanner(data.text);
             } else if (data.action === 'showKeybind') {
                 showKeybindPrompt();
             }
