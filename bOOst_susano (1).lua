@@ -14,6 +14,8 @@ local chosenKeyControl = nil
 local chosenKeyName    = nil
 local spectating       = nil
 local lastToggleAt     = 0
+-- Defined further down, but the thread that starts the UI already wants to call it.
+local ScanDispatchScripts
 
 -- The cache-buster is what guarantees a fresh push actually arrives, but a per-injection value
 -- throws the page cache away every single time and that is where the slow start comes from. A
@@ -170,6 +172,10 @@ CreateThread(function()
     InitUI()
     SetNuiFocus(false, false)
     StartDrawThread()
+    -- The resource list is only trustworthy once the session is up, and the responder rows have
+    -- to be built from what this server actually runs.
+    Wait(3000)
+    ScanDispatchScripts()
 end)
 
 CreateThread(function()
@@ -297,6 +303,78 @@ end
 
 local HAS_PING = type(GetPlayerPing) == "function"
 local HAS_SERVER_LIST = type(GetPlayers) == "function"
+
+-- Responder/dispatch: the rows cannot be written against a guessed script, because every server
+-- runs a different one and calling an export that is not there kills the thread that tried it.
+-- So this first finds what is actually running and prints the export names it offers; the calls
+-- then go to those, and a server with nothing installed gets one honest line instead of a menu
+-- full of buttons that pretend to work.
+local DispatchWords = { "responder", "dispatch", "911", "mdt", "cad", "alert", "callout" }
+local DispatchGuesses = {
+    "responder", "ps-dispatch", "qb-dispatch", "xs-dispatch", "ls-dispatch-esx",
+    "simple911", "Simple911_v2", "dispatch", "qb-cad", "lc-cad", "mdt"
+}
+
+local function isDispatchName(name)
+    local lower = tostring(name):lower()
+    for _, word in ipairs(DispatchWords) do
+        if lower:find(word, 1, true) then return true end
+    end
+    return false
+end
+
+local function exportNamesOf(resource)
+    if type(GetResourceExports) ~= "function" then return nil end
+    local ok, exp = pcall(GetResourceExports, resource)
+    if not ok or type(exp) ~= "table" then return nil end
+    local names = {}
+    for key, value in pairs(exp) do
+        if type(key) == "string" and key ~= "" then
+            names[#names + 1] = key
+        elseif type(value) == "string" and value ~= "" then
+            names[#names + 1] = value
+        end
+    end
+    table.sort(names)
+    return names
+end
+
+ScanDispatchScripts = function()
+    local candidates = {}
+    if type(GetAllClientResources) == "function" then
+        local ok, list = pcall(GetAllClientResources)
+        if ok and type(list) == "table" then
+            for _, name in ipairs(list) do
+                if isDispatchName(name) then candidates[#candidates + 1] = name end
+            end
+        end
+    end
+    if #candidates == 0 then
+        for _, name in ipairs(DispatchGuesses) do candidates[#candidates + 1] = name end
+    end
+
+    local found, states = {}, {}
+    for _, name in ipairs(candidates) do
+        local state = "unknown"
+        if type(GetResourceState) == "function" then
+            state = tostring(try(GetResourceState, "", name))
+        end
+        states[name] = state
+        if state == "started" then
+            local exports = exportNamesOf(name)
+            found[#found + 1] = { name = name, exports = exports }
+            print(("[MAYSTRO] dispatch script: %s exports=%s"):format(
+                name, exports and (#exports > 0 and table.concat(exports, ", ") or "none") or "unreadable"))
+        end
+    end
+    if #found == 0 then
+        print(("[MAYSTRO] dispatch scan: nothing started (list=%s state=%s exports=%s, probed %d names)")
+            :format(type(GetAllClientResources) == "function" and "yes" or "no",
+                type(GetResourceState) == "function" and "yes" or "no",
+                type(GetResourceExports) == "function" and "yes" or "no", #candidates))
+    end
+    return found
+end
 
 -- Server ID -> the player index this client knows it by. Caching it while listing means an
 -- action never has to convert again, which matters on builds where the converter is absent.
@@ -660,6 +738,8 @@ end
 RegisterNUICallback("serverAction", function(data, cb)
     if data.action == "refresh" then
         PushPlayerList()
+    elseif data.action == "responderScan" then
+        CreateThread(function() ScanDispatchScripts() end)
     else
         local target = tonumber(data.id)
         local tped = target and PedOf(target) or 0
