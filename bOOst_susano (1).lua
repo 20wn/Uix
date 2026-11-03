@@ -60,6 +60,7 @@ local function InitUI()
     txd = CreateRuntimeTxd("maystro_txd")
     txn = CreateRuntimeTextureFromDuiHandle(txd, "maystro_txn", duiHandle)
     Wait(600)
+    SendDuiMessage(duiObj, json.encode({ action = "setResource", name = GetCurrentResourceName() }))
     SendDuiMessage(duiObj, json.encode({ action = "showKeybind" }))
     print("[MAYSTRO] UI Loaded!")
 end
@@ -156,6 +157,7 @@ RegisterNUICallback("itemClicked", function(data, cb)
     local id = data.id
     local enabled = data.enabled
     local val = data.val
+    print(("[MAYSTRO] itemClicked: %s enabled=%s val=%s"):format(tostring(id), tostring(enabled), tostring(val)))
     local ped = PlayerPedId()
     local player = PlayerId()
 

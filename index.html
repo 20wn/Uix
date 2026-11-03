@@ -15,7 +15,8 @@
             --theme-color: #fa5e07;
             --theme-bright: #ff7826;
             --glass-bg: rgba(14, 10, 8, 0.92);
-            --active-item-bg: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(250, 94, 7, 0) 0%, rgba(250, 94, 7, 0.50) 100%);
+            --active-item-bg: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.45) 100%);
+            --modal-icon-bg: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(250, 94, 7, 0) 0%, rgba(250, 94, 7, 0.50) 100%);
         }
 
         * {
@@ -534,7 +535,7 @@
         .modal-header-icon {
             width: 28px;
             height: 28px;
-            background: var(--active-item-bg);
+            background: var(--modal-icon-bg);
             border-radius: 7px;
             display: flex;
             align-items: center;
@@ -762,6 +763,8 @@
         let menuToggleKey = null;
         let isWaitingForKeybind = true;
         let isMenuOpen = false;
+        // DUI pages get no GetParentResourceName, so the loader pushes its name via SendDuiMessage
+        let resourceName = (typeof GetParentResourceName === 'function') ? GetParentResourceName() : null;
 
         const i18n = {
             en: {
@@ -1179,11 +1182,11 @@
         function applyThemeColor(primaryHex, brightHex) {
             document.documentElement.style.setProperty('--theme-color', primaryHex);
             document.documentElement.style.setProperty('--theme-bright', brightHex || primaryHex);
-            document.documentElement.style.setProperty('--active-item-bg', `radial-gradient(ellipse 50% 50% at 50% 50%, rgba(${parseInt(primaryHex.slice(1,3),16)}, ${parseInt(primaryHex.slice(3,5),16)}, ${parseInt(primaryHex.slice(5,7),16)}, 0) 0%, rgba(${parseInt(primaryHex.slice(1,3),16)}, ${parseInt(primaryHex.slice(3,5),16)}, ${parseInt(primaryHex.slice(5,7),16)}, 0.50) 100%)`);
 
             const r = parseInt(primaryHex.slice(1,3),16);
             const g = parseInt(primaryHex.slice(3,5),16);
             const b = parseInt(primaryHex.slice(5,7),16);
+            document.documentElement.style.setProperty('--modal-icon-bg', `radial-gradient(ellipse 50% 50% at 50% 50%, rgba(${r},${g},${b},0) 0%, rgba(${r},${g},${b},0.50) 100%)`);
             counter.style.background = `radial-gradient(ellipse 50% 50% at 50% 50%, rgba(${r},${g},${b},0) 0%, rgba(${r},${g},${b},0.50) 100%)`;
             counter.style.borderColor = `rgba(${r},${g},${b},0.4)`;
         }
@@ -1321,6 +1324,18 @@
         }
 
         // Actions
+        function sendToLua(id, enabled, val) {
+            if (!resourceName) {
+                console.warn('[MAYSTRO] no resource name yet - feature state not sent');
+                return;
+            }
+            fetch(`https://${resourceName}/itemClicked`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: id, enabled: enabled, val: val })
+            }).catch(() => console.warn('[MAYSTRO] itemClicked callback failed'));
+        }
+
         function executeAction(item) {
             const action = item.getAttribute('data-action');
             playSound(1150, 0.06);
@@ -1360,20 +1375,7 @@
                         toggleEl.classList.toggle('active', hackStates[id].enabled);
                     }
                     playSound(hackStates[id].enabled ? 1350 : 650, 0.04);
-
-                    // Send action callback to FiveM Lua
-                    try {
-                        const resource = (typeof GetParentResourceName === 'function') ? GetParentResourceName() : 'ui';
-                        fetch(`https://${resource}/itemClicked`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                id: id,
-                                enabled: hackStates[id].enabled,
-                                val: hackStates[id].val
-                            })
-                        }).catch(() => {});
-                    } catch(e) {}
+                    sendToLua(id, hackStates[id].enabled, hackStates[id].val);
                 }
             } else {
                 item.style.transform = 'scale(0.98)';
@@ -1394,6 +1396,7 @@
                     const stepperEl = item.querySelector('.item-stepper');
                     if (stepperEl) stepperEl.textContent = `- ${st.val} -`;
                     playSound(950 + st.val * 70, 0.025);
+                    sendToLua(id, st.enabled, st.val);
                 }
             }
         }
@@ -1409,6 +1412,7 @@
                 const stepperEl = item.querySelector('.item-stepper');
                 if (stepperEl) stepperEl.textContent = `- ${st.val} -`;
                 playSound(950 + st.val * 70, 0.025);
+                sendToLua(id, st.enabled, st.val);
             }
         }
 
@@ -1455,6 +1459,8 @@
             if (!data) return;
             if (data.action === 'openMenu') {
                 openMenu();
+            } else if (data.action === 'setResource') {
+                resourceName = data.name || resourceName;
             } else if (data.action === 'closeMenu') {
                 closeMenu();
             } else if (data.action === 'toggleMenu') {
