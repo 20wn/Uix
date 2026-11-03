@@ -215,27 +215,85 @@ local function playerKind(ped)
     return "car"
 end
 
+-- GetPlayers hands back server IDs, but the PLAYER natives want a player index.
+local function PedOf(src)
+    local idx = GetPlayerFromServerId(src)
+    if idx < 0 then return 0 end
+    return GetPlayerPed(idx)
+end
+
+local function NameOf(src)
+    local idx = GetPlayerFromServerId(src)
+    if idx < 0 then return nil end
+    return GetPlayerName(idx)
+end
+
+local function PingOf(src)
+    local idx = GetPlayerFromServerId(src)
+    if idx < 0 then return 0 end
+    return GetPlayerPing(idx) or 0
+end
+
 local function BuildPlayerList()
     local list = {}
-    for _, srv in ipairs(GetPlayers()) do
-        local ped = GetPlayerPed(srv)
-        if ped and ped ~= 0 then
-            list[#list + 1] = {
-                id   = srv,
-                name = GetPlayerName(srv) or ("ID " .. tostring(srv)),
-                ping = GetPlayerPing(srv) or 0,
-                kind = playerKind(ped)
-            }
+    local seen = {}
+    local me = PlayerPedId()
+    local mx, my, mz = table.unpack(GetEntityCoords(me, true))
+
+    local function add(srv, ped)
+        local streamed = srv and srv >= 0 and ped and ped ~= 0 and DoesEntityExist(ped)
+        if srv == nil or srv < 0 or seen[srv] then return end
+        seen[srv] = true
+
+        local dist, kind = -1, "unknown"
+        if streamed then
+            local tx, ty, tz = table.unpack(GetEntityCoords(ped, true))
+            dist = math.floor(GetDistanceBetweenCoords(mx, my, mz, tx, ty, tz, false))
+            kind = playerKind(ped)
         end
+
+        list[#list + 1] = {
+            id   = srv,
+            name = NameOf(srv) or ("ID " .. tostring(srv)),
+            ping = PingOf(srv),
+            kind = kind,
+            dist = dist
+        }
     end
+
+    -- These are player indices, so their peds are guaranteed and carry a distance.
+    for _, idx in ipairs(GetActivePlayers()) do
+        add(tonumber(GetPlayerServerId(idx)), GetPlayerPed(idx))
+    end
+
+    -- GetPlayers is the whole server, so anyone outside our streaming range still gets a
+    -- row; they simply have no ped, which shows as "?" instead of a distance. Some builds
+    -- hand these back as strings, so tonumber keeps the IDs comparable.
+    for _, srv in ipairs(GetPlayers()) do
+        local asNum = tonumber(srv)
+        if asNum then add(asNum, PedOf(asNum)) end
+    end
+
+    table.sort(list, function(a, b)
+        if a.dist < 0 then return false end
+        if b.dist < 0 then return true end
+        return a.dist < b.dist
+    end)
     return list
 end
 
+local lastPlayerCount = -1
+
 local function PushPlayerList()
     if not duiObj then return end
+    local list = BuildPlayerList()
+    if #list ~= lastPlayerCount then
+        print(("[MAYSTRO] players pushed: %d"):format(#list))
+        lastPlayerCount = #list
+    end
     SendDuiMessage(duiObj, json.encode({
         action   = "playerList",
-        players  = BuildPlayerList(),
+        players  = list,
         self     = GetPlayerServerId(PlayerId()),
         spectate = spectating or 0
     }))
@@ -244,7 +302,7 @@ end
 local function SetSpectate(target)
     local ped = PlayerPedId()
     if target then
-        NetworkSetInSpectatorMode(true, GetPlayerPed(target))
+        NetworkSetInSpectatorMode(true, PedOf(target))
         spectating = target
     else
         NetworkSetInSpectatorMode(false, ped)
@@ -282,7 +340,7 @@ RegisterNUICallback("serverAction", function(data, cb)
         PushPlayerList()
     else
         local target = tonumber(data.id)
-        local tped = target and GetPlayerPed(target) or 0
+        local tped = target and PedOf(target) or 0
 
         if data.action == "spectate" then
             if spectating == target then
@@ -305,7 +363,7 @@ CreateThread(function()
     while true do
         Wait(isMenuVisible and 500 or 2000)
         if duiObj and isMenuVisible then
-            if spectating and (not GetPlayerPed(spectating) or GetPlayerPed(spectating) == 0) then
+            if spectating and PedOf(spectating) == 0 then
                 SetSpectate(nil)
             end
             PushPlayerList()

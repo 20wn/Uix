@@ -443,6 +443,12 @@
             box-shadow: 0 0 8px var(--theme-bright);
         }
 
+        /* Players the game has not streamed yet have no ped, so their actions cannot run. */
+        .action-chip.dim {
+            opacity: 0.25;
+            pointer-events: none;
+        }
+
         .item-stepper {
             font-size: 12px;
             font-weight: 700;
@@ -1044,7 +1050,8 @@
             car: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z"/></svg>',
             bike: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="5.5" cy="16.5" r="3.5"/><circle cx="18.5" cy="16.5" r="3.5"/><path d="M5.5 16.5 9.5 8h5l4 8.5M8 8h6"/></svg>',
             boat: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 3h2v7h6l-2 4H7l-2-4h6V3z"/><path d="M3 17c1.6 1.9 4.3 3 9 3s7.4-1.1 9-3l-1.6-2H4.6L3 17z"/></svg>',
-            air: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>'
+            air: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>',
+            unknown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.2a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2-2.5 3.4"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg>'
         };
 
         function playerActions(id) {
@@ -1064,9 +1071,11 @@
             return players.map(p => ({
                 isPlayer: true,
                 playerId: p.id,
-                icon: kindIcons[p.kind] || kindIcons.foot,
+                icon: kindIcons[p.kind] || kindIcons.unknown,
                 text: p.name,
                 ping: p.ping,
+                dist: p.dist,
+                streamed: p.kind !== 'unknown',
                 isSelf: p.id === selfId,
                 action: 'select-player'
             }));
@@ -1208,10 +1217,12 @@
                 } else if (item.isPlayer) {
                     const acts = playerActions(item.playerId);
                     const focused = serverFocus === 'controls' && itemIndex === activeIndex;
+                    const range = item.isSelf ? t.you : (item.dist >= 0 ? item.dist + 'm' : '?');
                     rightHtml = `
                         <div class="item-controls">
-                            <span class="player-ping">${item.isSelf ? t.you : (item.ping + 'ms')}</span>
-                            <div class="item-actions">${acts.map((a, i) => `<span class="action-chip ${a.on ? 'on' : ''} ${focused && i === actionIndex ? 'focus' : ''}">${a.label}</span>`).join('')}</div>
+                            <span class="player-ping">${range}</span>
+                            <span class="player-ping">${item.ping}ms</span>
+                            <div class="item-actions">${acts.map((a, i) => `<span class="action-chip ${a.on ? 'on' : ''} ${focused && i === actionIndex && item.streamed ? 'focus' : ''} ${item.streamed ? '' : 'dim'}">${a.label}</span>`).join('')}</div>
                         </div>
                     `;
                 } else {
