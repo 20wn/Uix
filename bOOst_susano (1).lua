@@ -75,29 +75,26 @@ local function InitUI()
         type(SetPedComponentVariation)))
 end
 
-local function ToggleMenu(state)
-    if state == nil then
-        isMenuVisible = not isMenuVisible
-    else
-        isMenuVisible = state
-    end
-    SetNuiFocus(false, false)
-    print(isMenuVisible and "[MAYSTRO] Menu Opened" or "[MAYSTRO] Menu Closed")
-end
+-- FiveM has no draw-order native: 2D calls stack in the order the threads that make them
+-- resume, and threads waiting on Wait(0) resume in creation order. So the menu draws from the
+-- newest thread in the VM, which puts it above every overlay started before it. Creating that
+-- thread when the menu opens is what keeps it on top; wrapping the draw in CreateThread inside
+-- the frame does nothing, because a new thread runs immediately until its first Wait.
+local drawGen = 0
 
-CreateThread(function()
-    InitUI()
-    SetNuiFocus(false, false)
+local function StartDrawThread()
+    drawGen = drawGen + 1
+    local myGen = drawGen
 
-    while true do
-        Wait(0)
-        if isMenuVisible and txd and txn then
-            -- 2D draws stack in call order and FiveM has no layer/order native, so the
-            -- menu is drawn from a thread created this frame: it resumes after the
-            -- scripts already running and lands on top of their HUD and scaleforms.
-            CreateThread(function()
-                DrawSprite("maystro_txd", "maystro_txn", 0.5, 0.5, 1.0, 1.0, 0.0, 255, 255, 255, 255)
-            end)
+    CreateThread(function()
+        while true do
+            Wait(0)
+            -- Checked right after the wait: a thread that only finds out at the loop top
+            -- would still draw one more frame on top of the newer one.
+            if drawGen ~= myGen then return end
+            if not (isMenuVisible and txd and txn) then goto continue end
+
+            DrawSprite("maystro_txd", "maystro_txn", 0.5, 0.5, 1.0, 1.0, 0.0, 255, 255, 255, 255)
 
             if not chosenKeyControl then
                 SetMouseCursorActiveThisFrame()
@@ -114,8 +111,28 @@ CreateThread(function()
                     SendDuiMouseUp(duiObj, "left")
                 end
             end
+
+            ::continue::
         end
+    end)
+end
+
+local function ToggleMenu(state)
+    if state == nil then
+        isMenuVisible = not isMenuVisible
+    else
+        isMenuVisible = state
     end
+    SetNuiFocus(false, false)
+    -- Opening restarts the draw thread so this menu becomes the newest one in the VM.
+    if isMenuVisible then StartDrawThread() end
+    print(isMenuVisible and "[MAYSTRO] Menu Opened" or "[MAYSTRO] Menu Closed")
+end
+
+CreateThread(function()
+    InitUI()
+    SetNuiFocus(false, false)
+    StartDrawThread()
 end)
 
 CreateThread(function()
