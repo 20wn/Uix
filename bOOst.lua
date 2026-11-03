@@ -29,6 +29,8 @@ local Features = {
     punch       = false,
     noclip      = false,
     noclipSpeed = 2,
+    freecam     = false,
+    freecamSpeed = 1,
     ragdoll     = false
 }
 
@@ -227,6 +229,16 @@ CreateThread(function()
     end
 end)
 
+-- Both flying modes stop the body from behaving like a ped: noclip also drops collision so the
+-- world cannot push him back, and the freeze is shared so turning one on while the other is
+-- already on cannot leave the body frozen after both are off.
+local function SyncFlyFreeze()
+    local ped = PlayerPedId()
+    local flying = (Features.noclip or Features.freecam) == true
+    SetEntityCollision(ped, not Features.noclip, not Features.noclip)
+    FreezeEntityPosition(ped, flying)
+end
+
 RegisterNUICallback("itemClicked", function(data, cb)
     local id = data.id
     local enabled = data.enabled
@@ -249,8 +261,11 @@ RegisterNUICallback("itemClicked", function(data, cb)
     elseif id == "noclip" then
         Features.noclip = enabled
         if val then Features.noclipSpeed = val end
-        SetEntityCollision(ped, not enabled, not enabled)
-        FreezeEntityPosition(ped, enabled)
+        SyncFlyFreeze()
+    elseif id == "freecam" then
+        Features.freecam = enabled
+        if val then Features.freecamSpeed = val end
+        SyncFlyFreeze()
     elseif id == "ragdoll" then
         Features.ragdoll = enabled
         if enabled then
@@ -704,6 +719,55 @@ local function held(controlId)
     return IsControlPressed(0, controlId) or IsDisabledControlPressed(0, controlId)
 end
 
+-- The arrows navigate the menu while it is open, so they only fly when it is closed. W/S/A/D,
+-- SPACE and SHIFT are not menu keys and fly in both states. This replaces "no flying while the
+-- menu is open", which was the trap that made noclip look dead: switching it on inside the menu
+-- and then pressing a key moved nothing at all.
+local ArrowKey = { [172] = true, [173] = true, [174] = true, [175] = true }
+local function flyKey(controlId)
+    if isMenuVisible and ArrowKey[controlId] then return false end
+    return held(controlId)
+end
+
+-- One direction for both flying modes: h and p are the radian heading and pitch of whatever the
+-- view owns, so the camera always steers. SPACE rises, SHIFT or LEFT CTRL sinks.
+local function flyVector(h, p, speed)
+    local dx, dy, dz = 0.0, 0.0, 0.0
+    if flyKey(32) or flyKey(172) then
+        dx = dx - math.sin(h) * speed * math.cos(p)
+        dy = dy + math.cos(h) * speed * math.cos(p)
+        dz = dz + math.sin(p) * speed
+    end
+    if flyKey(33) or flyKey(173) then
+        dx = dx + math.sin(h) * speed * math.cos(p)
+        dy = dy - math.cos(h) * speed * math.cos(p)
+        dz = dz - math.sin(p) * speed
+    end
+    if flyKey(34) or flyKey(174) then
+        dx = dx - math.cos(h) * speed
+        dy = dy - math.sin(h) * speed
+    end
+    if flyKey(35) or flyKey(175) then
+        dx = dx + math.cos(h) * speed
+        dy = dy + math.sin(h) * speed
+    end
+    if flyKey(22) then dz = dz + speed end
+    if flyKey(21) or flyKey(36) then dz = dz - speed end
+    return dx, dy, dz
+end
+
+local freecam = nil
+local warnedNoCamNatives = false
+
+local function StopFreecam()
+    if not freecam then return end
+    try(RenderScriptCams, nil, false, true, 400, true, false)
+    try(DestroyCam, nil, freecam, false)
+    freecam = nil
+    SyncFlyFreeze()
+    print("[MAYSTRO] Freecam off")
+end
+
 CreateThread(function()
     while true do
         local sleep = 500
@@ -725,27 +789,57 @@ CreateThread(function()
             sleep = 0
             SetPlayerMeleeWeaponDamageModifier(player, 100.0)
         end
-        -- The menu owns W/S/A/D and the arrows while it is open, and spectator mode owns
-        -- the camera, so flying is paused in both: otherwise scrolling the list drags the
-        -- body up and down.
-        if Features.noclip and not isMenuVisible and not spectating then
+
+        -- Spectator mode owns the camera, so it takes the view away from both flying modes; the
+        -- freecam has to hand it back before anything else runs.
+        if not Features.freecam or spectating then StopFreecam() end
+
+        if spectating then
+            -- the spectator camera drives itself
+        elseif Features.freecam then
+            sleep = 0
+            if not freecam then
+                local from = try(GetGameplayCamCoord, nil)
+                local rot = try(GetGameplayCamRot, nil, 2)
+                if type(CreateCamWithParams) ~= "function" or not from or not rot then
+                    if not warnedNoCamNatives then
+                        warnedNoCamNatives = true
+                        print("[MAYSTRO] cam natives unavailable - freecam disabled")
+                    end
+                    Features.freecam = false
+                else
+                    freecam = CreateCamWithParams("DEFAULT_SCRIPTED_CAMERA",
+                        from[1], from[2], from[3], rot[1], 0.0, rot[3], 55.0, true, 2)
+                    try(SetCamAffectsAiming, nil, freecam, true)
+                    SyncFlyFreeze()
+                    print("[MAYSTRO] Freecam on")
+                end
+            end
+
+            if freecam then
+                local rot = try(GetCamRot, nil, freecam, 2)
+                local pos = try(GetCamCoord, nil, freecam)
+                if rot and pos then
+                    -- Mouse look: control 1 is left/right, 2 is up/down. Pitch is clamped so the
+                    -- camera cannot flip over, which would invert the movement axes.
+                    local mx = try(GetDisabledControlNormal, 0, 0, 1)
+                    local my = try(GetDisabledControlNormal, 0, 0, 2)
+                    local rx = math.max(-89.0, math.min(89.0, rot[1] + my * 4.0))
+                    local rz = (rot[3] - mx * 4.0) % 360.0
+                    try(SetCamRot, nil, freecam, rx, 0.0, rz, 2)
+                    local speed = (Features.freecamSpeed or 1) * 0.5
+                    local dx, dy, dz = flyVector(math.rad(rz), math.rad(-rx), speed)
+                    try(SetCamCoord, nil, freecam, pos[1] + dx, pos[2] + dy, pos[3] + dz)
+                end
+                try(RenderScriptCams, nil, true, false, 0, true, false)
+            end
+        elseif Features.noclip then
             sleep = 0
             local x, y, z = table.unpack(GetEntityCoords(ped, true))
             local speed = (Features.noclipSpeed or 2) * 0.4
             local h = math.rad(GetGameplayCamRelativeHeading() + GetEntityHeading(ped))
             local p = math.rad(GetGameplayCamRelativePitch())
-            local dx, dy, dz = 0.0, 0.0, 0.0
-            -- Arrows do the same thing as W/S/A/D. The menu only consumes the arrows while it is
-            -- open and flying is paused then, so nothing fights over them.
-            if held(32) or held(172) then dx = dx - math.sin(h) * speed * math.cos(p); dy = dy + math.cos(h) * speed * math.cos(p); dz = dz + math.sin(p) * speed end
-            if held(33) or held(173) then dx = dx + math.sin(h) * speed * math.cos(p); dy = dy - math.cos(h) * speed * math.cos(p); dz = dz - math.sin(p) * speed end
-            if held(34) or held(174) then dx = dx - math.cos(h) * speed; dy = dy - math.sin(h) * speed end
-            if held(35) or held(175) then dx = dx + math.cos(h) * speed; dy = dy + math.sin(h) * speed end
-            -- SPACE rises, SHIFT sinks (LEFT CTRL too, since control 21 only covers LEFT SHIFT).
-            -- There is no hidden speed modifier: SHIFT used to boost, which meant pressing it on
-            -- the way down did nothing and the ped stayed on the ground.
-            if held(22) then dz = dz + speed end
-            if held(21) or held(36) then dz = dz - speed end
+            local dx, dy, dz = flyVector(h, p, speed)
             SetEntityCoordsNoOffset(ped, x + dx, y + dy, z + dz, true, true, true)
         end
 
