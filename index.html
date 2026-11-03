@@ -1221,7 +1221,7 @@
                     rightHtml = `
                         <div class="item-controls">
                             <span class="player-ping">${range}</span>
-                            <span class="player-ping">${item.ping}ms</span>
+                            <span class="player-ping">${item.ping >= 0 ? item.ping + 'ms' : ''}</span>
                             <div class="item-actions">${acts.map((a, i) => `<span class="action-chip ${a.on ? 'on' : ''} ${focused && i === actionIndex && item.streamed ? 'focus' : ''} ${item.streamed ? '' : 'dim'}">${a.label}</span>`).join('')}</div>
                         </div>
                     `;

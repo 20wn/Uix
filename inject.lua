@@ -202,6 +202,17 @@ RegisterNUICallback("resetKeybind", function(_, cb)
     if cb then cb("ok") end
 end)
 
+-- FiveM does not register every native in every build or realm, and calling a nil global
+-- kills the thread that made the call, so the optional reads go through here.
+local function try(fn, fallback, ...)
+    if type(fn) ~= "function" then return fallback end
+    local ok, value = pcall(fn, ...)
+    if ok and value ~= nil then return value end
+    return fallback
+end
+
+local HAS_PING = type(GetPlayerPing) == "function"
+
 -- Vehicle class buckets used for the player-list icon.
 local function playerKind(ped)
     if not ped or ped == 0 or not IsPedInAnyVehicle(ped, false) then
@@ -229,8 +240,8 @@ end
 
 local function PingOf(src)
     local idx = GetPlayerFromServerId(src)
-    if idx < 0 then return 0 end
-    return GetPlayerPing(idx) or 0
+    if idx < 0 or not HAS_PING then return -1 end
+    return try(GetPlayerPing, -1, idx)
 end
 
 local function BuildPlayerList()
@@ -282,12 +293,22 @@ local function BuildPlayerList()
 end
 
 local lastPlayerCount = -1
+local lastListError
 
 local function PushPlayerList()
     if not duiObj then return end
-    local list = BuildPlayerList()
+    -- Never let one bad read take the push thread down with it; report it once instead.
+    local ok, list = pcall(BuildPlayerList)
+    if not ok then
+        local msg = tostring(list)
+        if msg ~= lastListError then
+            lastListError = msg
+            print("[MAYSTRO] player list failed: " .. msg)
+        end
+        return
+    end
     if #list ~= lastPlayerCount then
-        print(("[MAYSTRO] players pushed: %d"):format(#list))
+        print(("[MAYSTRO] players pushed: %d (ping native: %s)"):format(#list, HAS_PING and "yes" or "missing"))
         lastPlayerCount = #list
     end
     SendDuiMessage(duiObj, json.encode({
@@ -323,15 +344,17 @@ local function CopyOutfit(fromPed, toPed)
             ClearPedProp(toPed, prop)
         end
     end
-    local blend = GetPedHeadBlendData(fromPed)
-    if type(blend) == "table" then
+    local blend = type(GetPedHeadBlendData) == "function" and GetPedHeadBlendData(fromPed) or nil
+    if type(blend) == "table" and type(SetPedHeadBlendData) == "function" then
         SetPedHeadBlendData(toPed,
             blend.shapeFirst, blend.shapeSecond, blend.shapeThird,
             blend.skinFirst, blend.skinSecond, blend.skinThird,
             blend.shapeMix, blend.skinMix, blend.thirdMix, blend.isParent)
     end
-    local hair, highlights = GetPedHairColor(fromPed)
-    SetPedHairColor(toPed, hair or 0, highlights or 0)
+    if type(GetPedHairColor) == "function" and type(SetPedHairColor) == "function" then
+        local hair, highlights = GetPedHairColor(fromPed)
+        SetPedHairColor(toPed, hair or 0, highlights or 0)
+    end
 end
 
 RegisterNUICallback("serverAction", function(data, cb)
@@ -349,7 +372,8 @@ RegisterNUICallback("serverAction", function(data, cb)
             end
         elseif data.action == "copyOutfit" then
             if tped and tped ~= 0 then
-                CopyOutfit(tped, PlayerPedId())
+                local ok, err = pcall(CopyOutfit, tped, PlayerPedId())
+                if not ok then print("[MAYSTRO] copy outfit failed: " .. tostring(err)) end
             end
         end
 
