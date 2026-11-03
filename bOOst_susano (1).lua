@@ -65,6 +65,11 @@ local function InitUI()
     SendDuiMessage(duiObj, json.encode({ action = "setResource", name = GetCurrentResourceName() }))
     SendDuiMessage(duiObj, json.encode({ action = "showKeybind" }))
     print("[MAYSTRO] UI Loaded!")
+    -- Says which natives this build registers, so a nil-native crash names itself here
+    -- instead of showing up later as some other resource's script error.
+    print(("[MAYSTRO] natives probe: ping=%s headBlend=%s hair=%s spectator=%s"):format(
+        type(GetPlayerPing), type(GetPedHeadBlendData), type(GetPedHairColor),
+        type(NetworkSetInSpectatorMode)))
 end
 
 local function ToggleMenu(state)
