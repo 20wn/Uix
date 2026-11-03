@@ -72,6 +72,9 @@ local function InitUI()
     print(("[MAYSTRO] natives probe acts: spectator=%s headBlend=%s hair=%s component=%s"):format(
         type(NetworkSetInSpectatorMode), type(GetPedHeadBlendData), type(GetPedHairColor),
         type(SetPedComponentVariation)))
+    print(("[MAYSTRO] natives probe look: citizen=%s faceFeature=%s overlayData=%s hairColor=%s eyes=%s palette=%s"):format(
+        type(Citizen), type(GetPedFaceFeature), type(GetPedHeadOverlayData),
+        type(GetPedHairColor), type(GetPedEyeColor), type(GetPedPaletteVariation)))
 end
 
 -- FiveM has no draw-order native: 2D calls stack in the order the threads that make them
@@ -408,31 +411,196 @@ local function SetSpectate(target)
     end
 end
 
-local function CopyOutfit(fromPed, toPed)
-    for comp = 0, 11 do
-        SetPedComponentVariation(toPed, comp,
-            GetPedDrawableVariation(fromPed, comp),
-            GetPedTextureVariation(fromPed, comp), 0)
+-- Reading a whole character out of someone else's ped needs the CFX appearance natives, and this
+-- VM is Susano's, so every one of them is optional: what is missing is skipped and named in the
+-- report line instead of killing the copy halfway through.
+local COMPONENT_IDS = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 }
+local PROP_IDS      = { 0, 1, 2, 6, 7 }
+local FACE_FEATURE_COUNT = 20
+local HEAD_OVERLAY_COUNT = 12
+-- makeUp, blush and lipstick pick their colour out of a different palette than the rest.
+local OVERLAY_PALETTE_2 = { [4] = true, [5] = true, [8] = true }
+
+local function tofloat(value) return (tonumber(value) or 0) + 0.0 end
+
+local function hashOf(name) return try(GetHashKey, 0, name) end
+
+local function isFreemode(ped)
+    local model = try(GetEntityModel, 0, ped)
+    return model == hashOf("mp_m_freemode_01") or model == hashOf("mp_f_freemode_01")
+end
+
+-- GET_PED_HEAD_BLEND_DATA fills a padded struct, which Lua cannot hand over as a pointer, so the
+-- read goes through Citizen's out-parameter helpers.
+local function readHeadBlend(ped)
+    if type(Citizen) ~= "table" or type(Citizen.InvokeNative) ~= "function"
+        or type(Citizen.PointerValueIntInitialized) ~= "function"
+        or type(Citizen.PointerValueFloatInitialized) ~= "function" then
+        return nil
     end
-    for prop = 0, 9 do
-        local idx = GetPedPropIndex(fromPed, prop)
-        if idx >= 0 then
-            SetPedPropIndex(toPed, prop, idx, GetPedPropTextureIndex(fromPed, prop), true)
-        else
-            ClearPedProp(toPed, prop)
+
+    local pi, pf = Citizen.PointerValueIntInitialized, Citizen.PointerValueFloatInitialized
+    local ok, shapeFirst, shapeSecond, shapeThird, skinFirst, skinSecond, skinThird, shapeMix, skinMix, thirdMix =
+        pcall(Citizen.InvokeNative, 0x2746BD9D88C5C5D0, ped,
+            pi(0), pi(0), pi(0), pi(0), pi(0), pi(0), pf(0), pf(0), pf(0))
+    if not ok then return nil end
+
+    local function mix(value)
+        value = tonumber(value) or 0
+        if value < 0 then value = 0 elseif value > 1 then value = 1 end
+        return value
+    end
+
+    return {
+        tonumber(shapeFirst) or 0, tonumber(shapeSecond) or 0, tonumber(shapeThird) or 0,
+        tonumber(skinFirst) or 0, tonumber(skinSecond) or 0, tonumber(skinThird) or 0,
+        mix(shapeMix), mix(skinMix), mix(thirdMix)
+    }
+end
+
+local function CopyHead(fromPed, toPed, targetIndex, rep)
+    if isFreemode(toPed) then
+        local blend = readHeadBlend(fromPed)
+        if blend and type(SetPedHeadBlendData) == "function" then
+            SetPedHeadBlendData(toPed, blend[1], blend[2], blend[3], blend[4], blend[5], blend[6],
+                tofloat(blend[7]), tofloat(blend[8]), tofloat(blend[9]), false)
+            rep.blend = "ok"
+        elseif targetIndex and targetIndex >= 0
+            and type(NetworkApplyCachedPlayerHeadBlendData) == "function" then
+            -- When the blend cannot be read out of the ped, the game still holds the face of every
+            -- player in the session, so the copy comes from that cache instead.
+            if try(NetworkApplyCachedPlayerHeadBlendData, false, toPed, targetIndex) then
+                rep.blend = "cached"
+            end
+        end
+
+        if type(GetPedFaceFeature) == "function" and type(SetPedFaceFeature) == "function" then
+            for index = 0, FACE_FEATURE_COUNT - 1 do
+                SetPedFaceFeature(toPed, index, tofloat(GetPedFaceFeature(fromPed, index)))
+            end
+            rep.face = "ok"
+        end
+
+        if type(GetPedHeadOverlayData) == "function" then
+            for index = 0, HEAD_OVERLAY_COUNT - 1 do
+                local _, value, _, firstColor, secondColor, opacity = GetPedHeadOverlayData(fromPed, index)
+                value = tonumber(value) or 255
+                if value == 255 then
+                    try(SetPedHeadOverlay, nil, toPed, index, 0, 0.0)
+                else
+                    try(SetPedHeadOverlay, nil, toPed, index, value, tofloat(opacity))
+                    if type(SetPedHeadOverlayColor) == "function" then
+                        try(SetPedHeadOverlayColor, nil, toPed, index,
+                            OVERLAY_PALETTE_2[index] and 2 or 1,
+                            tonumber(firstColor) or 0, tonumber(secondColor) or 0)
+                    end
+                end
+            end
+            rep.overlays = "ok"
         end
     end
-    local blend = type(GetPedHeadBlendData) == "function" and GetPedHeadBlendData(fromPed) or nil
-    if type(blend) == "table" and type(SetPedHeadBlendData) == "function" then
-        SetPedHeadBlendData(toPed,
-            blend.shapeFirst, blend.shapeSecond, blend.shapeThird,
-            blend.skinFirst, blend.skinSecond, blend.skinThird,
-            blend.shapeMix, blend.skinMix, blend.thirdMix, blend.isParent)
+
+    local hairStyle = try(GetPedDrawableVariation, -1, fromPed, 2)
+    if hairStyle and hairStyle >= 0 then
+        try(SetPedComponentVariation, nil, toPed, 2, hairStyle,
+            try(GetPedTextureVariation, 0, fromPed, 2) or 0, 0)
+        rep.hair = "style"
     end
+
     if type(GetPedHairColor) == "function" and type(SetPedHairColor) == "function" then
-        local hair, highlights = GetPedHairColor(fromPed)
-        SetPedHairColor(toPed, hair or 0, highlights or 0)
+        local color = math.max(0, try(GetPedHairColor, -1, fromPed) or -1)
+        local highlight = math.max(0, try(GetPedHairHighlightColor, -1, fromPed) or -1)
+        try(SetPedHairColor, nil, toPed, color, highlight)
+        rep.hair = "ok"
     end
+
+    if type(GetPedEyeColor) == "function" and type(SetPedEyeColor) == "function" then
+        try(SetPedEyeColor, nil, toPed, math.max(0, try(GetPedEyeColor, -1, fromPed) or -1))
+        rep.eyes = "ok"
+    end
+end
+
+local function CopyClothes(fromPed, toPed, rep)
+    local freemode = isFreemode(toPed)
+
+    for _, component in ipairs(COMPONENT_IDS) do
+        -- Face and hair on a freemode character belong to the blend and overlay data; writing a
+        -- drawable over them there resets the face that was just copied.
+        if not (freemode and (component == 0 or component == 2)) then
+            local drawable = try(GetPedDrawableVariation, -1, fromPed, component)
+            if drawable and drawable >= 0 then
+                SetPedComponentVariation(toPed, component, drawable,
+                    try(GetPedTextureVariation, 0, fromPed, component) or 0,
+                    try(GetPedPaletteVariation, 0, fromPed, component) or 0)
+                rep.clothes = rep.clothes + 1
+            end
+        end
+    end
+
+    for _, prop in ipairs(PROP_IDS) do
+        local drawable = try(GetPedPropIndex, -1, fromPed, prop)
+        if drawable and drawable >= 0 then
+            try(SetPedPropIndex, nil, toPed, prop, drawable,
+                try(GetPedPropTextureIndex, 0, fromPed, prop) or 0, true)
+            rep.props = rep.props + 1
+        else
+            try(ClearPedProp, nil, toPed, prop)
+        end
+    end
+end
+
+-- SetPlayerModel throws away the current ped and builds a new one, so the handle is re-read after
+-- the swap and the seat is re-taken if he was riding something.
+local function CopyCharacter(fromPed, src)
+    local rep = { model = "same", blend = "no", face = "no", overlays = "no",
+                  hair = "no", eyes = "no", clothes = 0, props = 0 }
+    if not pedExists(fromPed) then return rep end
+
+    local mine = PlayerPedId()
+    local fromModel = try(GetEntityModel, 0, fromPed)
+    local myModel = try(GetEntityModel, 0, mine)
+
+    if fromModel and fromModel ~= myModel and try(IsModelInCdimage, false, fromModel) then
+        local veh = try(GetVehiclePedIsIn, 0, mine, false)
+        local seat
+        if veh and veh > 0 then
+            for candidate = -1, 3 do
+                if try(GetPedInVehicleSeat, 0, veh, candidate) == mine then
+                    seat = candidate
+                    break
+                end
+            end
+        end
+
+        RequestModel(fromModel)
+        local deadline = GetGameTimer() + 5000
+        while not try(HasModelLoaded, false, fromModel) and GetGameTimer() < deadline do
+            Wait(0)
+        end
+
+        if try(HasModelLoaded, false, fromModel) then
+            SetPlayerModel(PlayerId(), fromModel)
+            SetModelAsNoLongerNeeded(fromModel)
+            Wait(150)
+            mine = PlayerPedId()
+            if isFreemode(mine) then
+                try(SetPedDefaultComponentVariation, nil, mine)
+            end
+            if veh and veh > 0 and seat then
+                try(SetPedIntoVehicle, nil, mine, veh, seat)
+            end
+            rep.model = "swapped"
+        else
+            rep.model = "load timeout"
+        end
+    end
+
+    local targetIndex = src and IndexOf(src) or nil
+    if targetIndex and targetIndex < 0 then targetIndex = nil end
+
+    CopyHead(fromPed, mine, targetIndex, rep)
+    CopyClothes(fromPed, mine, rep)
+    return rep
 end
 
 RegisterNUICallback("serverAction", function(data, cb)
@@ -450,8 +618,17 @@ RegisterNUICallback("serverAction", function(data, cb)
             end
         elseif data.action == "copyOutfit" then
             if pedExists(tped) then
-                local ok, err = pcall(CopyOutfit, tped, PlayerPedId())
-                if not ok then print("[MAYSTRO] copy outfit failed: " .. tostring(err)) end
+                -- The model swap waits for streaming, so the copy runs on its own thread and
+                -- reports which parts this build could actually read.
+                CreateThread(function()
+                    local ok, rep = pcall(CopyCharacter, tped, target)
+                    if ok then
+                        print(("[MAYSTRO] character copied: model=%s blend=%s face=%s overlays=%s hair=%s eyes=%s clothes=%d props=%d"):format(
+                            rep.model, rep.blend, rep.face, rep.overlays, rep.hair, rep.eyes, rep.clothes, rep.props))
+                    else
+                        print("[MAYSTRO] copy character failed: " .. tostring(rep))
+                    end
+                end)
             end
         elseif data.action == "teleport" then
             local tx, ty, tz
