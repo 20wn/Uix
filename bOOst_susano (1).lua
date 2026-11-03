@@ -2,15 +2,26 @@
 -- The HTML/JS URL and original UI rendering are kept unchanged.
 
 local payload = [=[
-local isMenuVisible    = true
+-- Starts closed. It used to start true because that was the only thing that made the draw
+-- thread paint the keybind prompt, and the first press of a freshly bound key then CLOSED the
+-- menu instead of opening it -- which looks like "one press does nothing, spamming opens it".
+-- The prompt is painted by chosenKeyControl == nil now, so the flag can tell the truth.
+local isMenuVisible    = false
 local duiObj           = nil
 local txd              = nil
 local txn              = nil
 local chosenKeyControl = nil
 local chosenKeyName    = nil
 local spectating       = nil
+local lastToggleAt     = 0
 
-local WebURL = "https://raw.githack.com/20wn/Uix/main/index.html?v=" .. tostring(GetGameTimer())
+-- The cache-buster is what guarantees a fresh push actually arrives, but a per-injection value
+-- throws the page cache away every single time and that is where the slow start comes from. A
+-- 5-minute bucket still beats githack's own staleness and lets quick re-injects load warm.
+local webStamp = (type(GetCloudTimeAsInt) == "function")
+    and math.floor(GetCloudTimeAsInt() / 300000)
+    or math.floor(GetGameTimer() / 300000)
+local WebURL = "https://raw.githack.com/20wn/Uix/main/index.html?v=" .. tostring(webStamp)
 
 local Features = {
     godmode     = false,
@@ -55,15 +66,26 @@ local function InitUI()
             duiObj = nil
             return
         end
-        Wait(100)
+        Wait(50)
     end
 
     local duiHandle = GetDuiHandle(duiObj)
     txd = CreateRuntimeTxd("maystro_txd")
     txn = CreateRuntimeTextureFromDuiHandle(txd, "maystro_txn", duiHandle)
-    Wait(600)
+    Wait(250)
     SendDuiMessage(duiObj, json.encode({ action = "setResource", name = GetCurrentResourceName() }))
     SendDuiMessage(duiObj, json.encode({ action = "showKeybind" }))
+    -- The DUI page only owns a message listener once its own script has run, so a single early
+    -- push can land on nothing -- and without setResource the page has no resource name to POST
+    -- to, so every option it clicks silently does nothing. Re-pushing the name is harmless and
+    -- removes the need to guess how long the page needs.
+    CreateThread(function()
+        for i = 1, 8 do
+            Wait(600)
+            if not duiObj then return end
+            SendDuiMessage(duiObj, json.encode({ action = "setResource", name = GetCurrentResourceName() }))
+        end
+    end)
     print("[MAYSTRO] UI Loaded!")
     -- Says which natives this build registers, so a nil-native crash names itself here
     -- instead of showing up later as some other resource's script error.
@@ -161,14 +183,21 @@ CreateThread(function()
                     chosenKeyName = keyName
                     print("[MAYSTRO] Key Chosen: " .. keyName)
                     SendDuiMessage(duiObj, json.encode({ action = "setKeybind", key = keyName }))
-                    Wait(400)
+                    -- No Wait here: a sleeping loop misses every press that happens while it is
+                    -- asleep, and a missed press is the difference between "one tap opens it" and
+                    -- "I have to hammer the key".
                     break
                 end
             end
         else
-            if IsDisabledControlJustPressed(0, chosenKeyControl) or IsControlJustPressed(0, chosenKeyControl) then
-                ToggleMenu()
-                Wait(200)
+            -- Debounce is a timestamp, not a sleep, so the next press is always seen on the
+            -- frame it arrives.
+            local now = GetGameTimer()
+            if now - lastToggleAt > 120 then
+                if IsDisabledControlJustPressed(0, chosenKeyControl) or IsControlJustPressed(0, chosenKeyControl) then
+                    lastToggleAt = now
+                    ToggleMenu()
+                end
             end
 
             -- Arrows only: W/S/A/D belong to walking and noclip, so the menu must not
