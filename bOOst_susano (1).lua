@@ -36,24 +36,6 @@ local KeyMap = {
     [163] = "9",  [156] = "0",  [243] = "~"
 }
 
-local ClipboardViaNet
-
-local function ReadClipboardText()
-    if _native_GetClipboardText then return _native_GetClipboardText() end
-    if ClipboardViaNet == false then return nil end
-    local ok, result = pcall(function()
-        local clr = require and require("lclr") or nil
-        if not clr then return nil end
-        local Forms = clr.System.Windows.Forms
-        local text = Forms.Clipboard.GetText()
-        if type(text) == "string" and #text > 0 then return text end
-        return nil
-    end)
-    if ok and result ~= nil then return result end
-    if not ok then ClipboardViaNet = false end
-    return nil
-end
-
 local function InitUI()
     if duiObj then return end
 
@@ -153,14 +135,6 @@ CreateThread(function()
                 end
                 if IsDisabledControlJustPressed(0, 191) or IsDisabledControlJustPressed(0, 18) then
                     SendDuiMessage(duiObj, json.encode({ action = "keydown", key = "Enter" }))
-                end
-                -- Ctrl+V: read the Windows clipboard and hand the text to the DUI input
-                if (IsDisabledControlJustPressed(0, 172) or IsDisabledControlJustPressed(0, 173) or
-                    IsDisabledControlJustPressed(0, 34) or IsDisabledControlJustPressed(0, 35)) and
-                   (IsControlPressed(0, 24) or IsDisabledControlPressed(0, 24)) then
-                    local clip = ReadClipboardText()
-                    SendDuiMessage(duiObj, json.encode({ action = "pasteClipboard", text = clip or "" }))
-                    Wait(250)
                 end
                 if IsDisabledControlJustPressed(0, 194) then
                     SendDuiMessage(duiObj, json.encode({ action = "keydown", key = "Backspace" }))
